@@ -1,0 +1,9 @@
+# Matchfile (sample)
+
+# git_url 'git@github.com:your-org/certificates.git'
+# type 'appstore'
+# storage_mode 'git'
+
+# Configure match to point at a secure private repo that stores your
+# certificates and provisioning profiles. Use environment variables to
+# override values in CI.

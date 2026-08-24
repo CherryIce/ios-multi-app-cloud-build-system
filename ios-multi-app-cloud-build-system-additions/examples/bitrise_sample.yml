@@ -1,0 +1,20 @@
+# Bitrise sample configuration (examples/bitrise_sample.yml)
+# This is a minimal example showing the main steps for a macOS/iOS build on Bitrise.
+
+format_version: "11"
+default_step_lib_source: https://github.com/bitrise-io/bitrise-steplib.git
+workflows:
+  primary:
+    steps:
+      - git-clone: {}
+      - certificate-and-profile-installer: {}
+      - cocoapods-install: {}
+      - run:
+          title: Install fastlane
+          inputs:
+            - content: |
+                gem install fastlane -NV
+      - fastlane:
+          inputs:
+            - lane: ios build
+      - deploy-to-bitrise-io: {}

@@ -1,0 +1,14 @@
+# Example app build configuration (examples/app-template/BuildConfig.yml)
+
+apps:
+  - name: ExampleApp
+    bundle_id: com.example.app
+    scheme: ExampleApp
+    lane: build
+    export_method: app-store
+
+  - name: ExampleApp-Staging
+    bundle_id: com.example.app.staging
+    scheme: ExampleApp-Staging
+    lane: build
+    export_method: ad-hoc

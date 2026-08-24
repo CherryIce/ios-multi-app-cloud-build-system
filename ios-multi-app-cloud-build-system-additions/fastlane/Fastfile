@@ -1,0 +1,45 @@
+# Fastlane Fastfile (sample)
+
+default_platform(:ios)
+
+platform :ios do
+  desc "Build apps for CI"
+  lane :build do
+    # Example: run match to fetch signing credentials, then build
+    match(type: ENV['MATCH_TYPE'] || 'appstore', readonly: true, force_for_new_devices: true) rescue UI.message("match skipped or needs setup")
+
+    # Use gym to build an archive for each app. For multi-app setups you might
+    # iterate over a config file (examples/BuildConfig.yml) to build multiple targets.
+    gym(
+      scheme: ENV['SCHEME'] || "App",
+      export_method: ENV['EXPORT_METHOD'] || "app-store",
+      output_directory: "artifacts",
+      clean: true
+    )
+
+    UI.message("Build complete. Artifacts are in ./artifacts")
+  end
+
+  desc "Upload to TestFlight (beta)"
+  lane :beta do
+    match(type: 'appstore', readonly: true)
+    build
+    pilot(skip_submission: true, skip_waiting_for_build_processing: true)
+  end
+
+  desc "Release to App Store"
+  lane :release do
+    match(type: 'appstore')
+    build
+    pilot
+  end
+
+  desc "Sync certificates and profiles with match"
+  lane :sync_signing do
+    # Example match configuration. See fastlane docs for more details.
+    match(
+      type: ENV['MATCH_TYPE'] || 'appstore',
+      git_url: ENV['MATCH_GIT_URL'] || 'git@github.com:your-org/certificates.git'
+    )
+  end
+end
