@@ -1,8 +1,10 @@
 # iOS 多 App 通用云打包与 TestFlight 自动上传实施方案
 
-> 文档版本：1.0  
-> 更新日期：2026-08-22  
+> 文档版本：1.1<br>
+> 更新日期：2026-08-24<br>
 > 适用范围：多个独立 iOS App 仓库，共用一套 GitHub Actions 构建、签名、导出、上传及 App Store Connect 状态确认能力。
+
+> 实现状态：仓库根目录中的 composite action、`scripts/`、JSON Schema 和 `tests/` 是当前参考实现；`examples/` 与 `ios-multi-app-cloud-build-system-additions/examples/` 都是需要补齐工程值和密钥接线的伪代码/迁移草稿，不承诺可直接运行。当前自测只覆盖配置、脚本契约和模拟 ASC 响应，不代表真实 App 已完成 Archive、签名、上传或 TestFlight 验证。
 
 ## 1. 结论
 
@@ -110,14 +112,9 @@ App C：Repository/Organization Secrets ─┘
 ┌───────────────────────────▼─────────────────────────────────┐
 │ ios-build-core                                               │
 │ .github/actions/build-upload/action.yml                      │
-│ scripts/preflight.sh                                         │
-│ scripts/install-signing.sh                                   │
-│ scripts/archive.sh                                           │
-│ scripts/export.sh                                            │
-│ scripts/inspect-ipa.sh                                       │
-│ scripts/upload.sh                                            │
-│ scripts/wait-asc.sh                                          │
-│ scripts/cleanup.sh                                           │
+│ schemas/ios-build-config.schema.json                         │
+│ scripts/                                                     │
+│ tests/                                                       │
 └───────────────────────────┬─────────────────────────────────┘
                             │
                   ┌─────────▼──────────┐
@@ -127,11 +124,12 @@ App C：Repository/Organization Secrets ─┘
                   └────────────────────┘
 ```
 
-`ios-build-core` 可以同时提供：
+`ios-build-core` 当前提供：
 
 - 推荐的 composite action，供绑定 App Environment 的普通 job 调用。
-- 可选的 reusable workflow，供不依赖 caller Environment secrets 的 App 使用。
 - 通用脚本和 JSON Schema，确保两种入口最终执行同一套核心逻辑。
+
+可选 reusable workflow 只保留为后续扩展方向；当前仓库没有宣称已经提供该入口。
 
 ## 5. 仓库职责与目录建议
 
@@ -144,28 +142,43 @@ ios-build-core/
 │   │   └── build-upload/
 │   │       └── action.yml
 │   └── workflows/
-│       ├── reusable-ios-release.yml
 │       └── core-self-test.yml
 ├── schemas/
 │   └── ios-build-config.schema.json
 ├── scripts/
+│   ├── init.sh
+│   ├── validate-config.rb
+│   ├── config-value.rb
+│   ├── preflight.rb
 │   ├── preflight.sh
+│   ├── next-build-number.rb
 │   ├── resolve-build-number.sh
 │   ├── install-dependencies.sh
+│   ├── prepare-asc-key.sh
 │   ├── install-signing.sh
-│   ├── validate-profiles.sh
-│   ├── make-export-options.sh
+│   ├── validate-profiles-archive.rb
+│   ├── map-profiles.rb
+│   ├── make-export-options.rb
 │   ├── archive.sh
 │   ├── export.sh
+│   ├── inspect-ipa.rb
 │   ├── inspect-ipa.sh
-│   ├── create-asc-jwt.rb
+│   ├── plist-to-json.py
+│   ├── collect-artifacts.sh
 │   ├── upload.sh
-│   ├── wait-asc.sh
-│   └── cleanup.sh
+│   ├── wait-asc.rb
+│   ├── assign-beta-groups.rb
+│   ├── cleanup.sh
+│   └── lib/
+│       ├── config.rb
+│       ├── asc_client.rb
+│       └── asc_state.rb
 ├── tests/
 │   ├── fixtures/
-│   └── test-*.sh
-├── CHANGELOG.md
+│   ├── test_*.rb
+│   ├── run.sh
+│   └── macos-contract.sh
+├── examples/app-repository/
 └── README.md
 ```
 
@@ -199,6 +212,14 @@ app-a/
 
 ```yaml
 schema_version: 1
+
+release:
+  allowed_events:
+    - workflow_dispatch
+  allowed_ref_patterns:
+    - refs/heads/main
+    - refs/heads/release/*
+    - refs/tags/ios-v*
 
 app:
   name: AppA
@@ -234,7 +255,7 @@ export:
   strip_swift_symbols: true
 
 upload:
-  enabled_by_default: true
+  enabled_by_default: false
   asc_key_type: team
   wait_level: testflight_internal_ready
   timeout_minutes: 45
@@ -253,6 +274,8 @@ artifacts:
 - `xcode_path` 必须是 runner 上真实存在的路径；GitHub runner 镜像会变化，应定期对照官方软件清单。[G8]
 - 主 App、Widget、Notification Service、Share Extension、Watch App、App Clip 等必须逐一列出。
 - `profile_alias` 只用于把 Bundle ID 与解码后的 profile 对应起来，不是 Secret 名称。
+- `build.runner` 是供评审和记录使用的预期 runner；真正的 job runner 仍由 App workflow 的 `runs-on` 决定，两处必须保持一致。
+- `upload.enabled_by_default` 是模板建议值，不会越过 workflow input；参考 workflow 默认仍不上传。
 - 自定义依赖命令只能来自受保护分支中的配置，不能让 `workflow_dispatch` 接受任意 shell 字符串。
 
 ## 7. Secrets 设计
@@ -451,7 +474,7 @@ GitHub 的 Environment 保护规则在 job 启动和读取 Environment secrets �
 
 ## 10. 推荐调用 workflow 骨架
 
-下面只展示结构。`<FULL_COMMIT_SHA>` 必须替换为真实的完整 SHA，不能直接复制占位符运行。
+下面只展示结构。字段较完整的接入草稿见 [`examples/app-repository/.github/workflows/ios-release.yml`](examples/app-repository/.github/workflows/ios-release.yml)。`<FULL_COMMIT_SHA>` 必须替换为已审核的真实完整 SHA，不能直接复制占位符运行。
 
 ```yaml
 name: iOS Release
@@ -470,7 +493,7 @@ on:
       upload_to_asc:
         description: Upload to App Store Connect
         required: true
-        default: true
+        default: false
         type: boolean
 
 permissions:
@@ -489,13 +512,13 @@ jobs:
 
     steps:
       - name: Checkout exact source
-        uses: actions/checkout@<FULL_COMMIT_SHA>
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Build, export and upload
-        uses: your-org/ios-build-core/.github/actions/build-upload@<FULL_COMMIT_SHA>
+        uses: CherryIce/ios-multi-app-cloud-build-system/.github/actions/build-upload@<FULL_COMMIT_SHA>
         with:
           config_path: .github/ios-build.yml
           marketing_version: ${{ inputs.marketing_version }}
@@ -665,19 +688,19 @@ xcodebuild -resolvePackageDependencies \
 怎么做：
 
 1. 在 `$RUNNER_TEMP` 下创建权限为 `700` 的任务目录。
-2. 提前注册 `trap` 或最终 `always()` cleanup。
+2. composite action 使用最后一个 `if: always()` cleanup 步骤；如果某个独立 shell 脚本还创建额外临时资源，只能用该 shell 自己的 `trap` 作为补充，因为一个 step 的 `trap` 无法覆盖后续 step。
 3. 禁止 `set -x`，避免命令展开时输出 Secret。
 4. 对需要额外脱敏的值使用 GitHub `::add-mask::`。
 5. 任何文件路径只允许落在本次任务的显式临时目录内。
 6. action inputs 中的 Secret 只在需要它的内部步骤映射为环境变量；完成解码或导入后立即 `unset`，不能让后续 `xcodebuild`、Pod script phase 或项目自定义脚本继承原始 Secret 值。
 
-成功判据：临时目录存在、权限正确、清理钩子已注册。
+成功判据：临时目录存在、权限正确，action 的最终 cleanup 步骤已保留。
 
 失败处理：立即执行清理并退出。
 
 ### 步骤 6：解码并预检 `.p12` 和 profiles
 
-做什么：在导入 Keychain 之前检查签名文件是否可解析、是否过期、是否属于正确 App。ASC `.p8` 延迟到上传阶段才解码，避免它暴露给 App 构建脚本。
+做什么：在导入 Keychain 之前检查签名文件是否可解析、是否过期、是否属于正确 App。ASC `.p8` 默认延迟到上传阶段才解码；只有 `asc_increment` 需要提前查询 build number，此时它只映射给该步骤，查询后立即删除，避免 App 构建脚本继承 API Key。
 
 怎么做：
 
@@ -1308,6 +1331,8 @@ app-a-appstore：只保存 P8              → 下载已校验 IPA 并上传 ASC
 - [ ] cleanup 在成功、失败、取消时都会执行。
 
 ## 18. 最终推荐
+
+当前参考实现已经补齐 composite action、配置 Schema、签名/Archive/导出/IPA 检查/ASC 脚本和 CI 自测；App 接入时应以 `examples/app-repository/` 草稿为起点，补齐真实工程值并固定中央 action 的完整提交 SHA。`ios-multi-app-cloud-build-system-additions/examples/` 只作为设计迁移参考。
 
 生产环境采用以下组合：
 

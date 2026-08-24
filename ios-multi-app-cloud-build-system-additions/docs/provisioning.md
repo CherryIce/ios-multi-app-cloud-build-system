@@ -1,6 +1,6 @@
-Provisioning and Signing
+# Provisioning and Signing
 
-This document outlines recommended approaches to manage provisioning profiles and signing certificates for a multi-app cloud build system.
+This document describes an optional Fastlane signing adapter. It is a pseudocode draft, not the production path implemented by the root composite action.
 
 1. Use fastlane match for centralized signing
    - Store certificates and provisioning profiles in a private git repository (encrypted by match).
@@ -9,11 +9,14 @@ This document outlines recommended approaches to manage provisioning profiles an
 
 2. App Store Connect API (recommended for automation)
    - Use App Store Connect API keys for tasks that require App Store interactions (TestFlight uploads, metadata updates).
-   - Store API key JSON in CI secrets and set APP_STORE_CONNECT_API_KEY and APP_STORE_CONNECT_API_ISSUER.
+   - Store the `.p8`, Key ID, and Issuer ID independently in the CI secret store.
+   - Fastlane must explicitly call `app_store_connect_api_key(key_id:, issuer_id:, key_filepath:)` or pass `api_key_path:` to `pilot`. Environment-variable names alone do not configure Fastlane authentication.
+   - If Bitrise Apple Service connection supplies the key, document that external dependency instead of implying the repository contains the credential wiring.
 
 3. Protect secrets
    - Do not commit provisioning profiles, certificates, private keys, or API keys to the repository.
    - Use your CI provider's secret storage (GitHub Actions Secrets, Bitrise Secrets, etc.).
+   - Decode the `.p8` only for the upload step and delete it afterwards.
 
 4. Per-app vs Shared signing
    - For teams where apps share a signing identity, a shared match repo works well.

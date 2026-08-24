@@ -1,0 +1,41 @@
+name: Core self-test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-self-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Run portable contracts
+        run: bash tests/run.sh
+
+  macos-release-tool-contract:
+    needs: portable-contracts
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Verify macOS release tools and contracts
+        run: bash tests/macos-contract.sh

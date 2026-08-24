@@ -1,0 +1,18 @@
+{
+  "data": [
+    {
+      "type": "buildUploads",
+      "id": "upload-123",
+      "attributes": {
+        "cfBundleShortVersionString": "2.3.0",
+        "cfBundleVersion": "1042",
+        "platform": "IOS",
+        "state": "COMPLETE",
+        "uploadedDate": "2026-08-24T10:00:00Z"
+      }
+    }
+  ],
+  "links": {
+    "next": null
+  }
+}

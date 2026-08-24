@@ -1,5 +1,6 @@
-# Bitrise sample configuration (examples/bitrise_sample.yml)
-# This is a minimal example showing the main steps for a macOS/iOS build on Bitrise.
+# PSEUDOCODE DRAFT: adapt and validate this in a real Bitrise app before use.
+# This path uses Fastlane match as its only signing source. Do not also install
+# unrelated Bitrise-managed profiles unless the fallback behavior is explicit.
 
 format_version: "11"
 default_step_lib_source: https://github.com/bitrise-io/bitrise-steplib.git
@@ -7,14 +8,11 @@ workflows:
   primary:
     steps:
       - git-clone: {}
-      - certificate-and-profile-installer: {}
       - cocoapods-install: {}
-      - run:
-          title: Install fastlane
-          inputs:
-            - content: |
-                gem install fastlane -NV
       - fastlane:
           inputs:
             - lane: ios build
-      - deploy-to-bitrise-io: {}
+            - update_fastlane: "false" # App repository must commit Gemfile + Gemfile.lock.
+      - deploy-to-bitrise-io:
+          inputs:
+            - deploy_path: $BITRISE_DEPLOY_DIR

@@ -1,4 +1,4 @@
-Multi-app versioning and artifact management
+# Multi-app versioning and artifact management
 
 When managing multiple iOS apps from a centralized build system, consider the following strategies for versioning and artifacts:
 
@@ -8,7 +8,8 @@ When managing multiple iOS apps from a centralized build system, consider the fo
 
 2. Build metadata and CI tag
    - Append CI build numbers to CFBundleVersion (e.g., 1402 for build number 1402) to ensure uniqueness across builds.
-   - Use a consistent artifact naming scheme: <app>-<git-branch>-<short-sha>-<build-number>.ipa
+   - Use a consistent artifact naming scheme: `<app>-<sanitized-ref>-<short-sha>-<build-number>.ipa`.
+   - Replace `/`, whitespace, and shell-significant characters before using a ref in a filename.
 
 3. Artifacts storage
    - Store built artifacts in a centralized artifact store (GitHub Releases, S3, or a dedicated binary store).

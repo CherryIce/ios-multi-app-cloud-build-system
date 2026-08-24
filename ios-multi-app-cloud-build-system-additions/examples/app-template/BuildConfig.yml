@@ -1,4 +1,5 @@
-# Example app build configuration (examples/app-template/BuildConfig.yml)
+# PSEUDOCODE DRAFT: this file is not consumed by the production composite action.
+# Use examples/app-repository/.github/ios-build.yml for the implemented schema.
 
 apps:
   - name: ExampleApp

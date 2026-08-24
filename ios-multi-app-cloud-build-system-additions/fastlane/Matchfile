@@ -1,9 +1,8 @@
-# Matchfile (sample)
+# PSEUDOCODE DRAFT: values must be supplied by the App repository CI environment.
 
-# git_url 'git@github.com:your-org/certificates.git'
-# type 'appstore'
-# storage_mode 'git'
+git_url(ENV.fetch("MATCH_GIT_URL"))
+type(ENV.fetch("MATCH_TYPE", "appstore"))
+storage_mode("git")
 
-# Configure match to point at a secure private repo that stores your
-# certificates and provisioning profiles. Use environment variables to
-# override values in CI.
+# The private match repository stores encrypted signing material. ASC API keys
+# are separate and must never be stored in the match repository.

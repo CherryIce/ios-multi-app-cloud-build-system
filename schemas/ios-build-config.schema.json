@@ -1,0 +1,309 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CherryIce/ios-multi-app-cloud-build-system/schemas/ios-build-config.schema.json",
+  "title": "iOS multi-app build configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "release",
+    "app",
+    "build",
+    "versioning",
+    "export",
+    "upload",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_events", "allowed_ref_patterns"],
+      "properties": {
+        "allowed_events": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["workflow_dispatch", "push"]
+          }
+        },
+        "allowed_ref_patterns": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^refs/(heads|tags)/[^\\n]+$"
+          }
+        }
+      }
+    },
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "team_id", "asc_app_id", "primary_bundle_id", "bundle_ids"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/safeName"
+        },
+        "team_id": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]{10}$"
+        },
+        "asc_app_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "primary_bundle_id": {
+          "$ref": "#/$defs/bundleId"
+        },
+        "bundle_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["bundle_id", "target", "profile_alias"],
+            "properties": {
+              "bundle_id": {
+                "$ref": "#/$defs/bundleId"
+              },
+              "target": {
+                "$ref": "#/$defs/safeName"
+              },
+              "profile_alias": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9_-]*$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "container_type",
+        "container_path",
+        "scheme",
+        "configuration",
+        "runner",
+        "xcode_path",
+        "dependency_mode",
+        "dependency_command"
+      ],
+      "properties": {
+        "container_type": {
+          "enum": ["workspace", "project"]
+        },
+        "container_path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "scheme": {
+          "$ref": "#/$defs/safeName"
+        },
+        "configuration": {
+          "$ref": "#/$defs/safeName"
+        },
+        "runner": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "xcode_path": {
+          "type": "string",
+          "pattern": "^/Applications/Xcode[^/]*\\.app$"
+        },
+        "dependency_mode": {
+          "enum": ["none", "cocoapods", "spm", "flutter", "custom"]
+        },
+        "dependency_command": {
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "container_type": {
+                "const": "workspace"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "container_path": {
+                "pattern": "\\.xcworkspace$"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "container_path": {
+                "pattern": "\\.xcodeproj$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "dependency_mode": {
+                "const": "custom"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "dependency_command": {
+                "minLength": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "dependency_command": {
+                "const": ""
+              }
+            }
+          }
+        }
+      ]
+    },
+    "versioning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "marketing_version_source",
+        "build_number_strategy",
+        "build_number_override_allowed"
+      ],
+      "properties": {
+        "marketing_version_source": {
+          "const": "input"
+        },
+        "build_number_strategy": {
+          "enum": ["github_run_number", "asc_increment"]
+        },
+        "build_number_override_allowed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "export": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "upload_symbols", "strip_swift_symbols"],
+      "properties": {
+        "method": {
+          "enum": ["app-store-connect", "app-store"]
+        },
+        "upload_symbols": {
+          "type": "boolean"
+        },
+        "strip_swift_symbols": {
+          "type": "boolean"
+        }
+      }
+    },
+    "upload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled_by_default",
+        "asc_key_type",
+        "wait_level",
+        "timeout_minutes",
+        "poll_interval_seconds",
+        "internal_beta_group_ids"
+      ],
+      "properties": {
+        "enabled_by_default": {
+          "type": "boolean"
+        },
+        "asc_key_type": {
+          "const": "team"
+        },
+        "wait_level": {
+          "enum": [
+            "upload_accepted",
+            "asc_appeared",
+            "processing_complete",
+            "testflight_internal_ready"
+          ]
+        },
+        "timeout_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 180
+        },
+        "poll_interval_seconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 300
+        },
+        "internal_beta_group_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9-]+$"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "internal_beta_group_ids": {
+                "minItems": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "wait_level": {
+                "const": "testflight_internal_ready"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["retention_days", "keep_xcarchive"],
+      "properties": {
+        "retention_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90
+        },
+        "keep_xcarchive": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "bundleId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$"
+    },
+    "safeName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.+ -]+$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!~)(?!.*(^|/)\\.\\.(/|$))(?!.*//).+$"
+    }
+  }
+}

@@ -1,0 +1,232 @@
+name: Build and upload an iOS app
+description: Archive, sign, inspect, retain, upload, and verify one configured iOS app.
+
+inputs:
+  config_path:
+    description: Repository-relative path to the non-sensitive iOS build configuration.
+    required: true
+  marketing_version:
+    description: Three-component CFBundleShortVersionString.
+    required: true
+  build_number:
+    description: Optional positive integer CFBundleVersion override.
+    required: false
+    default: ""
+  upload_to_asc:
+    description: Whether to upload the validated IPA to App Store Connect.
+    required: false
+    default: "false"
+  ios_distribution_p12_base64:
+    description: Base64-encoded Apple Distribution certificate and private key.
+    required: true
+  ios_distribution_p12_password:
+    description: Password for the distribution P12.
+    required: true
+  ios_profiles_archive_base64:
+    description: Base64-encoded tar.gz containing all required App Store profiles.
+    required: true
+  asc_api_key_p8_base64:
+    description: Base64-encoded App Store Connect Team API private key.
+    required: false
+    default: ""
+  asc_key_id:
+    description: App Store Connect Team API Key ID.
+    required: false
+    default: ""
+  asc_issuer_id:
+    description: App Store Connect Team API Issuer ID.
+    required: false
+    default: ""
+
+outputs:
+  source_sha:
+    description: Exact source commit archived by the action.
+    value: ${{ steps.preflight.outputs.source_sha }}
+  marketing_version:
+    description: Marketing version used for the archive.
+    value: ${{ steps.preflight.outputs.marketing_version }}
+  build_number:
+    description: Resolved build number used for the archive.
+    value: ${{ steps.resolve.outputs.build_number }}
+  archive_path:
+    description: Temporary archive path; removed during cleanup unless retained as an Artifact.
+    value: ${{ steps.archive.outputs.archive_path }}
+  ipa_path:
+    description: IPA path retained until the caller job ends.
+    value: ${{ steps.export.outputs.ipa_path }}
+  ipa_sha256:
+    description: SHA-256 digest of the exported IPA.
+    value: ${{ steps.export.outputs.ipa_sha256 }}
+  asc_build_id:
+    description: App Store Connect build resource ID, when upload is enabled and observed.
+    value: ${{ steps.upload.outputs.asc_build_id }}
+  asc_upload_state:
+    description: Final observed BuildUpload state.
+    value: ${{ steps.upload.outputs.asc_upload_state }}
+  asc_processing_state:
+    description: Final observed build processing state.
+    value: ${{ steps.upload.outputs.asc_processing_state }}
+  testflight_internal_state:
+    description: Final observed internal TestFlight state.
+    value: ${{ steps.upload.outputs.testflight_internal_state }}
+
+runs:
+  using: composite
+  steps:
+    - name: Initialize isolated task directories
+      id: init
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/init.sh"
+
+    - name: Validate source, configuration, inputs, and toolchain
+      id: preflight
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ inputs.config_path }}
+        IOS_MARKETING_VERSION: ${{ inputs.marketing_version }}
+        IOS_BUILD_NUMBER: ${{ inputs.build_number }}
+        IOS_UPLOAD_TO_ASC: ${{ inputs.upload_to_asc }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/preflight.sh"
+
+    - name: Prepare ASC key for build number resolution
+      id: asc_key_for_number
+      if: ${{ steps.preflight.outputs.build_number_strategy == 'asc_increment' && inputs.build_number == '' }}
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        ASC_API_KEY_P8_BASE64: ${{ inputs.asc_api_key_p8_base64 }}
+        ASC_KEY_ID: ${{ inputs.asc_key_id }}
+        ASC_ISSUER_ID: ${{ inputs.asc_issuer_id }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/prepare-asc-key.sh"
+
+    - name: Resolve build number
+      id: resolve
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_MARKETING_VERSION: ${{ steps.preflight.outputs.marketing_version }}
+        IOS_REQUESTED_BUILD_NUMBER: ${{ steps.preflight.outputs.requested_build_number }}
+        ASC_KEY_PATH: ${{ steps.asc_key_for_number.outputs.asc_key_path }}
+        ASC_KEY_ID: ${{ inputs.asc_key_id }}
+        ASC_ISSUER_ID: ${{ inputs.asc_issuer_id }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/resolve-build-number.sh"
+
+    - name: Remove early ASC key copy
+      if: ${{ steps.asc_key_for_number.outputs.asc_key_path != '' }}
+      shell: bash
+      run: rm -f -- "${{ steps.asc_key_for_number.outputs.asc_key_path }}"
+
+    - name: Install locked project dependencies
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/install-dependencies.sh"
+
+    - name: Install temporary signing material
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_DISTRIBUTION_P12_BASE64: ${{ inputs.ios_distribution_p12_base64 }}
+        IOS_DISTRIBUTION_P12_PASSWORD: ${{ inputs.ios_distribution_p12_password }}
+        IOS_PROFILES_ARCHIVE_BASE64: ${{ inputs.ios_profiles_archive_base64 }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/install-signing.sh"
+
+    - name: Archive
+      id: archive
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_MARKETING_VERSION: ${{ steps.preflight.outputs.marketing_version }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/archive.sh"
+
+    - name: Export IPA
+      id: export
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/export.sh"
+
+    - name: Inspect exported IPA
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_MARKETING_VERSION: ${{ steps.preflight.outputs.marketing_version }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/inspect-ipa.sh"
+
+    - name: Collect build evidence
+      if: ${{ always() && steps.init.outcome == 'success' }}
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path || inputs.config_path }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/collect-artifacts.sh"
+
+    - name: Retain IPA and build evidence before Apple upload
+      if: ${{ always() && steps.init.outcome == 'success' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ios-build-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ steps.init.outputs.output_dir }}
+        if-no-files-found: warn
+        retention-days: ${{ steps.preflight.outputs.retention_days || '30' }}
+        compression-level: 0
+
+    - name: Prepare ASC key for upload
+      id: asc_key_for_upload
+      if: ${{ success() && inputs.upload_to_asc == 'true' }}
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        ASC_API_KEY_P8_BASE64: ${{ inputs.asc_api_key_p8_base64 }}
+        ASC_KEY_ID: ${{ inputs.asc_key_id }}
+        ASC_ISSUER_ID: ${{ inputs.asc_issuer_id }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/prepare-asc-key.sh"
+
+    - name: Upload and verify App Store Connect state
+      id: upload
+      if: ${{ success() && inputs.upload_to_asc == 'true' }}
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_MARKETING_VERSION: ${{ steps.preflight.outputs.marketing_version }}
+        ASC_KEY_PATH: ${{ steps.asc_key_for_upload.outputs.asc_key_path }}
+        ASC_KEY_ID: ${{ inputs.asc_key_id }}
+        ASC_ISSUER_ID: ${{ inputs.asc_issuer_id }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/upload.sh"
+
+    - name: Collect upload diagnostics
+      if: ${{ always() && steps.init.outcome == 'success' }}
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path || inputs.config_path }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/collect-artifacts.sh"
+
+    - name: Retain upload status and diagnostics
+      if: ${{ always() && steps.init.outcome == 'success' && inputs.upload_to_asc == 'true' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ios-upload-status-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          ${{ steps.init.outputs.output_dir }}/asc-status.json
+          ${{ steps.init.outputs.output_dir }}/build-metadata.json
+          ${{ steps.init.outputs.output_dir }}/logs/upload.log
+        if-no-files-found: warn
+        retention-days: ${{ steps.preflight.outputs.retention_days || '30' }}
+
+    - name: Remove temporary signing material
+      if: ${{ always() && steps.init.outcome == 'success' }}
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/cleanup.sh"

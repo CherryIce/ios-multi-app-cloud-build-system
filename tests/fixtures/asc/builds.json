@@ -1,0 +1,43 @@
+{
+  "data": [
+    {
+      "type": "builds",
+      "id": "build-123",
+      "attributes": {
+        "version": "1042",
+        "processingState": "VALID"
+      },
+      "relationships": {
+        "preReleaseVersion": {
+          "data": {
+            "type": "preReleaseVersions",
+            "id": "prerelease-230"
+          }
+        },
+        "buildBetaDetail": {
+          "data": {
+            "type": "buildBetaDetails",
+            "id": "beta-detail-123"
+          }
+        }
+      }
+    }
+  ],
+  "included": [
+    {
+      "type": "preReleaseVersions",
+      "id": "prerelease-230",
+      "attributes": {
+        "version": "2.3.0",
+        "platform": "IOS"
+      }
+    },
+    {
+      "type": "buildBetaDetails",
+      "id": "beta-detail-123",
+      "attributes": {
+        "internalBuildState": "READY_FOR_BETA_TESTING"
+      }
+    }
+  ]
+}

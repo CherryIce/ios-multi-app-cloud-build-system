@@ -1,0 +1,42 @@
+schema_version: 1
+release:
+  allowed_events: [workflow_dispatch]
+  allowed_ref_patterns: [refs/heads/main]
+app:
+  name: ExampleApp
+  team_id: ABCDE12345
+  asc_app_id: "1234567890"
+  primary_bundle_id: com.example.app
+  bundle_ids:
+    - bundle_id: com.example.app
+      target: ExampleApp
+      profile_alias: app
+build:
+  container_type: workspace
+  container_path: ../Outside.xcworkspace
+  scheme: ExampleApp
+  configuration: Release
+  runner: macos-26
+  xcode_path: /Applications/Xcode.app
+  dependency_mode: none
+  dependency_command: ""
+versioning:
+  marketing_version_source: input
+  build_number_strategy: github_run_number
+  build_number_override_allowed: true
+export:
+  method: app-store-connect
+  upload_symbols: true
+  strip_swift_symbols: true
+upload:
+  enabled_by_default: false
+  asc_key_type: team
+  wait_level: upload_accepted
+  timeout_minutes: 45
+  poll_interval_seconds: 30
+  internal_beta_group_ids:
+    - group-id-requires-ready-state
+artifacts:
+  retention_days: 30
+  keep_xcarchive: false
+unexpected: true

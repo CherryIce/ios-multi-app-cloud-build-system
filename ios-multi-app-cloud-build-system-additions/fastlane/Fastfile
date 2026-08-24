@@ -1,45 +1,65 @@
-# Fastlane Fastfile (sample)
+# PSEUDOCODE DRAFT: adapt this to a real App repository and validate it there.
+# The production implementation in this repository is the root composite action.
 
 default_platform(:ios)
 
 platform :ios do
-  desc "Build apps for CI"
-  lane :build do
-    # Example: run match to fetch signing credentials, then build
-    match(type: ENV['MATCH_TYPE'] || 'appstore', readonly: true, force_for_new_devices: true) rescue UI.message("match skipped or needs setup")
+  before_all do
+    setup_ci if ENV["CI"]
+  end
 
-    # Use gym to build an archive for each app. For multi-app setups you might
-    # iterate over a config file (examples/BuildConfig.yml) to build multiple targets.
-    gym(
-      scheme: ENV['SCHEME'] || "App",
-      export_method: ENV['EXPORT_METHOD'] || "app-store",
-      output_directory: "artifacts",
+  private_lane :asc_api_key do
+    app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_filepath: ENV.fetch("ASC_API_KEY_P8_PATH")
+    )
+  end
+
+  private_lane :build_ipa do
+    match(type: ENV.fetch("MATCH_TYPE", "appstore"), readonly: true)
+    build_app(
+      scheme: ENV.fetch("SCHEME"),
+      export_method: ENV.fetch("EXPORT_METHOD", "app-store"),
+      output_directory: ENV.fetch("BITRISE_DEPLOY_DIR", "artifacts"),
       clean: true
     )
-
-    UI.message("Build complete. Artifacts are in ./artifacts")
+    lane_context[SharedValues::IPA_OUTPUT_PATH]
   end
 
-  desc "Upload to TestFlight (beta)"
+  desc "Build one configured App and retain its IPA"
+  lane :build do
+    build_ipa
+  end
+
+  desc "Upload only; this does not prove TestFlight readiness"
+  lane :upload_only do
+    ipa_path = build_ipa
+    upload_to_testflight(
+      api_key: asc_api_key,
+      ipa: ipa_path,
+      skip_submission: true,
+      skip_waiting_for_build_processing: true
+    )
+  end
+
+  desc "Upload and wait for normal TestFlight processing"
   lane :beta do
-    match(type: 'appstore', readonly: true)
-    build
-    pilot(skip_submission: true, skip_waiting_for_build_processing: true)
+    ipa_path = build_ipa
+    upload_to_testflight(
+      api_key: asc_api_key,
+      ipa: ipa_path,
+      distribute_external: false,
+      skip_waiting_for_build_processing: false
+    )
   end
 
-  desc "Release to App Store"
-  lane :release do
-    match(type: 'appstore')
-    build
-    pilot
-  end
-
-  desc "Sync certificates and profiles with match"
+  desc "Manually update the match repository; do not run this in release CI"
   lane :sync_signing do
-    # Example match configuration. See fastlane docs for more details.
     match(
-      type: ENV['MATCH_TYPE'] || 'appstore',
-      git_url: ENV['MATCH_GIT_URL'] || 'git@github.com:your-org/certificates.git'
+      type: ENV.fetch("MATCH_TYPE", "appstore"),
+      git_url: ENV.fetch("MATCH_GIT_URL"),
+      readonly: false
     )
   end
 end
