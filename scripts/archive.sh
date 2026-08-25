@@ -3,6 +3,8 @@ set -euo pipefail
 
 : "${IOS_BUILD_ACTION_PATH:?IOS_BUILD_ACTION_PATH is required}"
 : "${IOS_CONFIG_PATH:?IOS_CONFIG_PATH is required}"
+: "${IOS_PROFILE_MAP_PATH:?IOS_PROFILE_MAP_PATH is required}"
+: "${IOS_CODE_SIGN_IDENTITY:?IOS_CODE_SIGN_IDENTITY is required}"
 : "${IOS_MARKETING_VERSION:?IOS_MARKETING_VERSION is required}"
 : "${IOS_RESOLVED_BUILD_NUMBER:?IOS_RESOLVED_BUILD_NUMBER is required}"
 : "${IOS_BUILD_WORK_DIR:?IOS_BUILD_WORK_DIR is required}"
@@ -21,7 +23,6 @@ container_path="$(config_value build.container_path)"
 scheme="$(config_value build.scheme)"
 configuration="$(config_value build.configuration)"
 xcode_path="$(config_value build.xcode_path)"
-team_id="$(config_value app.team_id)"
 export DEVELOPER_DIR="${xcode_path}/Contents/Developer"
 
 archive_path="${IOS_BUILD_WORK_DIR}/App.xcarchive"
@@ -31,6 +32,12 @@ archive_log="${IOS_BUILD_LOGS_DIR}/archive.log"
 container_flag="-${container_type}"
 
 cd "$GITHUB_WORKSPACE"
+ruby "${IOS_BUILD_ACTION_PATH}/scripts/prepare-manual-signing.rb" \
+  --config "$IOS_CONFIG_PATH" \
+  --profile-map "$IOS_PROFILE_MAP_PATH" \
+  --identity "$IOS_CODE_SIGN_IDENTITY" \
+  --workspace "$GITHUB_WORKSPACE"
+
 set -o pipefail
 xcodebuild \
   "$container_flag" "$container_path" \
@@ -44,8 +51,6 @@ xcodebuild \
   CURRENT_PROJECT_VERSION="$IOS_RESOLVED_BUILD_NUMBER" \
   FLUTTER_BUILD_NAME="$IOS_MARKETING_VERSION" \
   FLUTTER_BUILD_NUMBER="$IOS_RESOLVED_BUILD_NUMBER" \
-  DEVELOPMENT_TEAM="$team_id" \
-  CODE_SIGN_IDENTITY="Apple Distribution" \
   archive 2>&1 | tee "$archive_log"
 
 test -f "${archive_path}/Info.plist"

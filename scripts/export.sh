@@ -4,6 +4,7 @@ set -euo pipefail
 : "${IOS_BUILD_ACTION_PATH:?IOS_BUILD_ACTION_PATH is required}"
 : "${IOS_CONFIG_PATH:?IOS_CONFIG_PATH is required}"
 : "${IOS_PROFILE_MAP_PATH:?IOS_PROFILE_MAP_PATH is required}"
+: "${IOS_CODE_SIGN_IDENTITY:?IOS_CODE_SIGN_IDENTITY is required}"
 : "${IOS_ARCHIVE_PATH:?IOS_ARCHIVE_PATH is required}"
 : "${IOS_BUILD_WORK_DIR:?IOS_BUILD_WORK_DIR is required}"
 : "${IOS_BUILD_OUTPUT_DIR:?IOS_BUILD_OUTPUT_DIR is required}"
@@ -21,6 +22,7 @@ mkdir -p "$export_path"
 ruby "${IOS_BUILD_ACTION_PATH}/scripts/make-export-options.rb" \
   --config "$IOS_CONFIG_PATH" \
   --profile-map "$IOS_PROFILE_MAP_PATH" \
+  --identity "$IOS_CODE_SIGN_IDENTITY" \
   --output "$export_options"
 plutil -lint "$export_options"
 

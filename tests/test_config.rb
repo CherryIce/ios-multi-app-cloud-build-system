@@ -54,6 +54,7 @@ class ConfigTest < Minitest::Test
         "ruby", script,
         "--config", VALID,
         "--profile-map", profile_map,
+        "--identity", "A" * 40,
         "--output", output
       )
       assert status.success?, [stdout, stderr].join("\n")
@@ -61,6 +62,7 @@ class ConfigTest < Minitest::Test
       assert_includes plist, "<string>app-store-connect</string>"
       assert_includes plist, "<key>com.example.app.widget</key>"
       assert_includes plist, "<string>Example Widget App Store Profile</string>"
+      assert_includes plist, "<key>signingCertificate</key>\n  <string>#{'A' * 40}</string>"
     end
   end
 end
