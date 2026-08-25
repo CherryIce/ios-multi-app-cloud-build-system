@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "pathname"
 require "yaml"
 
 module IOSBuild
@@ -9,10 +10,12 @@ module IOSBuild
   module Config
     module_function
 
-    TOP_LEVEL_KEYS = %w[schema_version release app build versioning export upload artifacts].freeze
+    SCHEMA_VERSION = 2
+    TOP_LEVEL_KEYS = %w[schema_version release app flutter build versioning export upload artifacts].freeze
     RELEASE_KEYS = %w[allowed_events allowed_ref_patterns].freeze
     APP_KEYS = %w[name team_id asc_app_id primary_bundle_id bundle_ids].freeze
     BUNDLE_KEYS = %w[bundle_id target profile_alias].freeze
+    FLUTTER_KEYS = %w[project_directory version channel architecture sdk_sha256].freeze
     BUILD_KEYS = %w[
       container_type container_path scheme configuration runner xcode_path
       dependency_mode dependency_command
@@ -73,10 +76,11 @@ module IOSBuild
     def validate!(data)
       errors = []
       exact_keys(data, TOP_LEVEL_KEYS, "root", errors)
-      integer_value(data, "schema_version", "root", errors, allowed: [1])
+      integer_value(data, "schema_version", "root", errors, allowed: [SCHEMA_VERSION])
 
       release = mapping(data, "release", "root", errors)
       app = mapping(data, "app", "root", errors)
+      flutter = mapping(data, "flutter", "root", errors)
       build = mapping(data, "build", "root", errors)
       versioning = mapping(data, "versioning", "root", errors)
       export = mapping(data, "export", "root", errors)
@@ -85,7 +89,9 @@ module IOSBuild
 
       validate_release(release, errors) if release
       validate_app(app, errors) if app
+      validate_flutter(flutter, errors) if flutter
       validate_build(build, errors) if build
+      validate_flutter_build_paths(flutter, build, errors) if flutter && build
       validate_versioning(versioning, errors) if versioning
       validate_export(export, errors) if export
       validate_upload(upload, errors) if upload
@@ -94,6 +100,16 @@ module IOSBuild
       raise ConfigError, errors.join("\n") unless errors.empty?
 
       true
+    end
+
+    def validate_flutter(flutter, errors)
+      exact_keys(flutter, FLUTTER_KEYS, "flutter", errors)
+      project_directory = string_value(flutter, "project_directory", "flutter", errors)
+      validate_relative_path(project_directory, "flutter.project_directory", errors)
+      string_value(flutter, "version", "flutter", errors, pattern: /\A\d+\.\d+\.\d+\z/)
+      string_value(flutter, "channel", "flutter", errors, allowed: %w[stable])
+      string_value(flutter, "architecture", "flutter", errors, allowed: %w[arm64 x64])
+      string_value(flutter, "sdk_sha256", "flutter", errors, pattern: /\A[0-9a-f]{64}\z/)
     end
 
     def validate_release(release, errors)
@@ -170,11 +186,24 @@ module IOSBuild
         "dependency_mode",
         "build",
         errors,
-        allowed: %w[none cocoapods spm flutter custom]
+        allowed: %w[flutter]
       )
       command = string_value(build, "dependency_command", "build", errors, allow_empty: true)
-      errors << "build.dependency_command is required when dependency_mode is custom" if dependency_mode == "custom" && command.to_s.empty?
-      errors << "build.dependency_command must be empty unless dependency_mode is custom" if dependency_mode != "custom" && !command.to_s.empty?
+      errors << "build.dependency_command must be empty on the Flutter branch" unless command.to_s.empty?
+      errors << "build.dependency_mode must be flutter on the Flutter branch" if dependency_mode && dependency_mode != "flutter"
+    end
+
+    def validate_flutter_build_paths(flutter, build, errors)
+      project_directory = flutter["project_directory"]
+      container_path = build["container_path"]
+      return unless project_directory.is_a?(String) && container_path.is_a?(String)
+
+      return if project_directory == "."
+
+      prefix = "#{project_directory}/"
+      unless container_path.start_with?(prefix)
+        errors << "build.container_path must be inside flutter.project_directory"
+      end
     end
 
     def validate_versioning(versioning, errors)
@@ -285,7 +314,9 @@ module IOSBuild
       return unless value
 
       components = value.split("/")
-      if value.start_with?("/", "~") || components.include?("..") || components.include?("") || value.include?("\0")
+      clean_path = Pathname.new(value).cleanpath.to_s
+      if value.start_with?("/", "~") || components.include?("..") || components.include?("") ||
+         value.include?("\0") || clean_path != value
         errors << "#{path} must be a normalized repository-relative path"
       end
     end

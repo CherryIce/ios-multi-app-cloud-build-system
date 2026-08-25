@@ -1,0 +1,54 @@
+# FLUTTER APP REPOSITORY TEMPLATE: replace the action SHA, Environment, config,
+# ASC App ID, and Secrets before use.
+name: Flutter iOS Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      marketing_version:
+        description: Three-component CFBundleShortVersionString, for example 1.0.0
+        required: true
+        type: string
+      build_number:
+        description: Optional positive integer CFBundleVersion override
+        required: false
+        type: string
+      upload_to_asc:
+        description: Upload the validated IPA to App Store Connect
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flutter-ios-production-${{ github.repository }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  release:
+    environment: hearthio-production
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build, retain, and optionally upload Flutter iOS app
+        uses: CherryIce/ios-multi-app-cloud-build-system/.github/actions/build-upload@<PINNED_FULL_COMMIT_SHA>
+        with:
+          config_path: .github/ios-build.yml
+          marketing_version: ${{ inputs.marketing_version }}
+          build_number: ${{ inputs.build_number }}
+          upload_to_asc: ${{ inputs.upload_to_asc }}
+          ios_distribution_p12_base64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          ios_distribution_p12_password: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+          ios_profiles_archive_base64: ${{ secrets.IOS_PROFILES_ARCHIVE_BASE64 }}
+          asc_api_key_p8_base64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+          asc_key_id: ${{ secrets.ASC_KEY_ID }}
+          asc_issuer_id: ${{ secrets.ASC_ISSUER_ID }}

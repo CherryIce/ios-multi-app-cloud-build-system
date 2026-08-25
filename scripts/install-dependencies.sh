@@ -12,8 +12,8 @@ config_value() {
 
 require_tracked_file() {
   local path="$1"
-  test -f "$path" || { echo "$path must exist" >&2; exit 1; }
-  git ls-files --error-unmatch -- "$path" >/dev/null 2>&1 || {
+  test -f "${GITHUB_WORKSPACE}/${path}" || { echo "$path must exist" >&2; exit 1; }
+  git -C "$GITHUB_WORKSPACE" ls-files --error-unmatch -- "$path" >/dev/null 2>&1 || {
     echo "$path must be committed" >&2
     exit 1
   }
@@ -53,14 +53,40 @@ case "$mode" in
       -scheme "$scheme" | tee "${IOS_BUILD_LOGS_DIR}/dependencies.log"
     ;;
   flutter)
-    require_tracked_file pubspec.lock
+    : "${IOS_FLUTTER_VERSION:?IOS_FLUTTER_VERSION is required}"
+    project_directory="$(config_value flutter.project_directory)"
+    configured_flutter_version="$(config_value flutter.version)"
+    project_real="$(ruby -e 'puts File.realpath(File.join(ARGV.fetch(0), ARGV.fetch(1)))' "$GITHUB_WORKSPACE" "$project_directory")"
+    workspace_real="$(ruby -e 'puts File.realpath(ARGV.fetch(0))' "$GITHUB_WORKSPACE")"
+    case "$project_real" in
+      "$workspace_real"|"${workspace_real}/"*)
+        ;;
+      *)
+        echo "Flutter project directory must remain inside GITHUB_WORKSPACE" >&2
+        exit 1
+        ;;
+    esac
+
+    if [[ "$IOS_FLUTTER_VERSION" != "$configured_flutter_version" ]]; then
+      echo "Installed Flutter version does not match configuration" >&2
+      exit 1
+    fi
+
+    if [[ "$project_directory" == "." ]]; then
+      project_prefix=""
+    else
+      project_prefix="${project_directory}/"
+    fi
+
+    require_tracked_file "${project_prefix}pubspec.lock"
+    cd "$project_real"
     flutter pub get | tee "${IOS_BUILD_LOGS_DIR}/dependencies.log"
     if [[ -f ios/Podfile ]]; then
-      require_tracked_file ios/Podfile.lock
+      require_tracked_file "${project_prefix}ios/Podfile.lock"
       if [[ -f Gemfile ]]; then
-        bundle exec pod install --project-directory=ios --deployment
+        bundle exec pod install --project-directory=ios --deployment | tee -a "${IOS_BUILD_LOGS_DIR}/dependencies.log"
       else
-        pod install --project-directory=ios --deployment
+        pod install --project-directory=ios --deployment | tee -a "${IOS_BUILD_LOGS_DIR}/dependencies.log"
       fi
     fi
     ;;
@@ -74,7 +100,7 @@ case "$mode" in
     ;;
 esac
 
-if ! git diff --exit-code -- .; then
+if ! git -C "$GITHUB_WORKSPACE" diff --exit-code -- .; then
   echo "Dependency installation modified tracked files; commit the resolved state before release" >&2
   exit 1
 fi

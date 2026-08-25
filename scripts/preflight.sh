@@ -13,7 +13,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-for command_name in git ruby python3 security codesign openssl xcodebuild xcrun plutil unzip ditto shasum tar base64; do
+for command_name in git ruby python3 security codesign openssl xcodebuild xcrun plutil curl unzip ditto shasum tar base64; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Required command is unavailable: $command_name" >&2
     exit 1

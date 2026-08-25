@@ -1,26 +1,23 @@
+# FLUTTER APP REPOSITORY TEMPLATE: replace the ASC App ID and review every value.
 schema_version: 2
 
 release:
   allowed_events:
     - workflow_dispatch
-    - push
   allowed_ref_patterns:
     - refs/heads/main
     - refs/heads/release/*
     - refs/tags/ios-v*
 
 app:
-  name: ExampleApp
-  team_id: ABCDE12345
+  name: Hearthio
+  team_id: LGN7SU938D
   asc_app_id: "1234567890"
-  primary_bundle_id: com.example.app
+  primary_bundle_id: com.Hearthio.lite
   bundle_ids:
-    - bundle_id: com.example.app
-      target: ExampleApp
+    - bundle_id: com.Hearthio.lite
+      target: Runner
       profile_alias: app
-    - bundle_id: com.example.app.widget
-      target: ExampleWidget
-      profile_alias: widget
 
 flutter:
   project_directory: Hearthio
@@ -32,10 +29,10 @@ flutter:
 build:
   container_type: workspace
   container_path: Hearthio/ios/Runner.xcworkspace
-  scheme: ExampleApp
+  scheme: Runner
   configuration: Release
   runner: macos-26
-  xcode_path: /Applications/Xcode.app
+  xcode_path: /Applications/Xcode_26.4.app
   dependency_mode: flutter
   dependency_command: ""
 

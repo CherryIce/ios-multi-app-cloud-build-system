@@ -1,5 +1,5 @@
-name: Build and upload an iOS app
-description: Archive, sign, inspect, retain, upload, and verify one configured iOS app.
+name: Build and upload a Flutter iOS app
+description: Install a pinned Flutter SDK, archive, sign, inspect, retain, upload, and verify one configured Flutter app.
 
 inputs:
   config_path:
@@ -90,6 +90,13 @@ runs:
         IOS_BUILD_NUMBER: ${{ inputs.build_number }}
         IOS_UPLOAD_TO_ASC: ${{ inputs.upload_to_asc }}
       run: bash "$IOS_BUILD_ACTION_PATH/scripts/preflight.sh"
+
+    - name: Install verified Flutter SDK
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/install-flutter.sh"
 
     - name: Prepare ASC key for build number resolution
       id: asc_key_for_number

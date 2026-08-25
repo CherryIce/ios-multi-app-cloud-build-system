@@ -41,9 +41,29 @@ class ContractTest < Minitest::Test
   end
 
   def test_app_repository_config_matches_runtime_contract
-    config_path = File.join(ROOT, "examples/app-repository/.github/ios-build.yml")
+    config_path = File.join(ROOT, "examples/flutter-app-repository/.github/ios-build.yml")
     script_path = File.join(ROOT, "scripts/validate-config.rb")
     assert system("ruby", script_path, config_path, out: File::NULL)
+  end
+
+  def test_flutter_setup_precedes_dependencies_and_archive_receives_flutter_versions
+    action_text = File.read(ACTION_PATH)
+    setup_position = action_text.index("scripts/install-flutter.sh")
+    dependencies_position = action_text.index("scripts/install-dependencies.sh")
+    refute_nil setup_position
+    refute_nil dependencies_position
+    assert_operator setup_position, :<, dependencies_position
+
+    archive_text = File.read(File.join(ROOT, "scripts/archive.sh"))
+    assert_includes archive_text, 'FLUTTER_BUILD_NAME="$IOS_MARKETING_VERSION"'
+    assert_includes archive_text, 'FLUTTER_BUILD_NUMBER="$IOS_RESOLVED_BUILD_NUMBER"'
+  end
+
+  def test_flutter_sdk_download_is_official_and_checksum_verified
+    script = File.read(File.join(ROOT, "scripts/install-flutter.sh"))
+    assert_includes script, "https://storage.googleapis.com/flutter_infra_release/releases/"
+    assert_includes script, "Digest::SHA256.file"
+    assert_includes script, 'actual_sha256" != "$expected_sha256'
   end
 
   def test_plist_converter_handles_provisioning_profile_value_types

@@ -42,6 +42,8 @@ xcodebuild \
   -resultBundlePath "$result_path" \
   MARKETING_VERSION="$IOS_MARKETING_VERSION" \
   CURRENT_PROJECT_VERSION="$IOS_RESOLVED_BUILD_NUMBER" \
+  FLUTTER_BUILD_NAME="$IOS_MARKETING_VERSION" \
+  FLUTTER_BUILD_NUMBER="$IOS_RESOLVED_BUILD_NUMBER" \
   DEVELOPMENT_TEAM="$team_id" \
   CODE_SIGN_IDENTITY="Apple Distribution" \
   archive 2>&1 | tee "$archive_log"

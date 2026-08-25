@@ -14,6 +14,8 @@ class ConfigTest < Minitest::Test
   def test_valid_fixture_passes_runtime_validator
     config = IOSBuild::Config.load_file(VALID)
     assert_equal "com.example.app", IOSBuild::Config.dig(config, "app.primary_bundle_id")
+    assert_equal "Hearthio", IOSBuild::Config.dig(config, "flutter.project_directory")
+    assert_equal "3.35.7", IOSBuild::Config.dig(config, "flutter.version")
     assert_equal "github_run_number", IOSBuild::Config.dig(config, "versioning.build_number_strategy")
   end
 
@@ -21,6 +23,7 @@ class ConfigTest < Minitest::Test
     error = assert_raises(IOSBuild::ConfigError) { IOSBuild::Config.load_file(INVALID) }
     assert_includes error.message, "unexpected"
     assert_includes error.message, "normalized repository-relative path"
+    assert_includes error.message, "build.dependency_mode"
     assert_includes error.message, "testflight_internal_ready"
   end
 
@@ -28,7 +31,8 @@ class ConfigTest < Minitest::Test
     schema_path = File.join(ROOT, "schemas/ios-build-config.schema.json")
     schema = JSON.parse(File.read(schema_path))
     assert_equal IOSBuild::Config::TOP_LEVEL_KEYS.sort, schema.fetch("required").sort
-    assert_equal 1, schema.dig("properties", "schema_version", "const")
+    assert_equal IOSBuild::Config::SCHEMA_VERSION, schema.dig("properties", "schema_version", "const")
+    assert_equal IOSBuild::Config::FLUTTER_KEYS.sort, schema.dig("properties", "flutter", "required").sort
   end
 
   def test_runtime_rejects_duplicate_release_and_group_values

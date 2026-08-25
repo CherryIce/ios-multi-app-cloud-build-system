@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 release:
   allowed_events: [workflow_dispatch]
   allowed_ref_patterns: [refs/heads/main]
@@ -11,6 +11,12 @@ app:
     - bundle_id: com.example.app
       target: ExampleApp
       profile_alias: app
+flutter:
+  project_directory: ../Hearthio
+  version: "3.35"
+  channel: beta
+  architecture: amd64
+  sdk_sha256: invalid
 build:
   container_type: workspace
   container_path: ../Outside.xcworkspace
@@ -18,8 +24,8 @@ build:
   configuration: Release
   runner: macos-26
   xcode_path: /Applications/Xcode.app
-  dependency_mode: none
-  dependency_command: ""
+  dependency_mode: custom
+  dependency_command: echo unsafe
 versioning:
   marketing_version_source: input
   build_number_strategy: github_run_number

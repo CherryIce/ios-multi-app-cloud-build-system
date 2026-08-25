@@ -8,6 +8,7 @@
     "schema_version",
     "release",
     "app",
+    "flutter",
     "build",
     "versioning",
     "export",
@@ -16,7 +17,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "release": {
       "type": "object",
@@ -84,6 +85,30 @@
         }
       }
     },
+    "flutter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_directory", "version", "channel", "architecture", "sdk_sha256"],
+      "properties": {
+        "project_directory": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "channel": {
+          "const": "stable"
+        },
+        "architecture": {
+          "enum": ["arm64", "x64"]
+        },
+        "sdk_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
     "build": {
       "type": "object",
       "additionalProperties": false,
@@ -119,7 +144,7 @@
           "pattern": "^/Applications/Xcode[^/]*\\.app$"
         },
         "dependency_mode": {
-          "enum": ["none", "cocoapods", "spm", "flutter", "custom"]
+          "const": "flutter"
         },
         "dependency_command": {
           "type": "string"
@@ -150,25 +175,9 @@
           }
         },
         {
-          "if": {
-            "properties": {
-              "dependency_mode": {
-                "const": "custom"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "dependency_command": {
-                "minLength": 1
-              }
-            }
-          },
-          "else": {
-            "properties": {
-              "dependency_command": {
-                "const": ""
-              }
+          "properties": {
+            "dependency_command": {
+              "const": ""
             }
           }
         }

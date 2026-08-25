@@ -1,5 +1,10 @@
 # iOS 多 App 通用云打包与 TestFlight 自动上传实施方案
 
+> 分支说明：本文主体描述原生 iOS `main` 的 schema v1 架构。
+> `feature/flutter-support` 使用独立 schema v2，在相同签名、IPA、Artifact 和
+> ASC 证据链上增加 Flutter SDK 校验、嵌套工程和 Flutter 版本变量支持；接入
+> 时以 [`docs/flutter-support.md`](docs/flutter-support.md) 为准。
+
 > 文档版本：1.1<br>
 > 更新日期：2026-08-24<br>
 > 适用范围：多个独立 iOS App 仓库，共用一套 GitHub Actions 构建、签名、导出、上传及 App Store Connect 状态确认能力。

@@ -23,6 +23,15 @@ def fail_with(message)
   exit 1
 end
 
+def repository_path(workspace_real, relative_path, label, allow_workspace: false)
+  candidate = File.expand_path(relative_path, workspace_real)
+  resolved = File.realpath(candidate)
+  contained = resolved.start_with?(workspace_real + File::SEPARATOR)
+  contained ||= allow_workspace && resolved == workspace_real
+  fail_with("#{label} must remain inside GITHUB_WORKSPACE") unless contained
+  resolved
+end
+
 begin
   required_options = %i[config marketing_version upload_to_asc metadata github_output]
   missing = required_options.reject { |key| options.key?(key) && !options[key].to_s.empty? }
@@ -37,11 +46,7 @@ begin
      config_path.each_filename.any? { |component| component == ".." } || config_path.cleanpath.to_s != requested_config
     fail_with("configuration path must be a normalized repository-relative path")
   end
-  config_candidate = File.expand_path(requested_config, workspace_real)
-  config_real = File.realpath(config_candidate)
-  unless config_real.start_with?(workspace_real + File::SEPARATOR)
-    fail_with("configuration path must remain inside GITHUB_WORKSPACE")
-  end
+  config_real = repository_path(workspace_real, requested_config, "configuration path")
 
   config = IOSBuild::Config.load_file(config_real)
 
@@ -76,10 +81,16 @@ begin
   upload_to_asc = options.fetch(:upload_to_asc)
   fail_with("upload_to_asc must be true or false") unless %w[true false].include?(upload_to_asc)
 
+  project_directory = IOSBuild::Config.dig(config, "flutter.project_directory")
+  project_real = repository_path(workspace_real, project_directory, "Flutter project directory", allow_workspace: true)
+  fail_with("Flutter project directory is not a directory") unless File.directory?(project_real)
+  fail_with("Flutter project must contain pubspec.yaml") unless File.file?(File.join(project_real, "pubspec.yaml"))
+  fail_with("Flutter project must contain pubspec.lock") unless File.file?(File.join(project_real, "pubspec.lock"))
+
   container_path = IOSBuild::Config.dig(config, "build.container_path")
-  container_real = File.realpath(File.join(workspace_real, container_path))
-  unless container_real.start_with?(workspace_real + File::SEPARATOR)
-    fail_with("build container path must remain inside GITHUB_WORKSPACE")
+  container_real = repository_path(workspace_real, container_path, "build container path")
+  unless container_real.start_with?(project_real + File::SEPARATOR)
+    fail_with("build container path must remain inside the Flutter project directory")
   end
 
   xcode_path = IOSBuild::Config.dig(config, "build.xcode_path")
@@ -98,6 +109,12 @@ begin
     "marketing_version" => marketing_version,
     "requested_build_number" => build_number,
     "upload_to_asc" => upload_to_asc == "true",
+    "flutter" => {
+      "project_directory" => project_directory,
+      "version" => IOSBuild::Config.dig(config, "flutter.version"),
+      "channel" => IOSBuild::Config.dig(config, "flutter.channel"),
+      "architecture" => IOSBuild::Config.dig(config, "flutter.architecture")
+    },
     "created_at" => Time.now.utc.iso8601
   }
 
@@ -110,6 +127,9 @@ begin
     output.puts "requested_build_number=#{build_number}"
     output.puts "upload_to_asc=#{upload_to_asc}"
     output.puts "source_sha=#{source_sha}"
+    output.puts "flutter_project_directory=#{project_directory}"
+    output.puts "flutter_version=#{IOSBuild::Config.dig(config, 'flutter.version')}"
+    output.puts "flutter_architecture=#{IOSBuild::Config.dig(config, 'flutter.architecture')}"
     output.puts "build_number_strategy=#{IOSBuild::Config.dig(config, 'versioning.build_number_strategy')}"
     output.puts "retention_days=#{IOSBuild::Config.dig(config, 'artifacts.retention_days')}"
   end
