@@ -12,6 +12,7 @@ class SigningContractTest < Minitest::Test
   CONFIG = File.join(__dir__, "fixtures/config/valid.yml")
   INSTALL_SIGNING = File.join(ROOT, "scripts/install-signing.sh")
   MAPPER = File.join(ROOT, "scripts/map-profiles.rb")
+  VERIFY_IDENTITY = File.join(ROOT, "scripts/verify-code-signing-identity.rb")
 
   def test_signing_install_supports_legacy_pkcs12_encryption
     script = File.read(INSTALL_SIGNING)
@@ -79,6 +80,25 @@ class SigningContractTest < Minitest::Test
     end
   end
 
+  def test_code_signing_identity_is_matched_by_certificate_fingerprint
+    Dir.mktmpdir do |directory|
+      certificate = make_certificate("legacy-distribution-name")
+      other_certificate = make_certificate("other")
+      certificate_path = File.join(directory, "distribution.pem")
+      File.write(certificate_path, certificate.to_pem)
+
+      legacy_identity = "  1) #{certificate_fingerprint(certificate)} \"iPhone Distribution: Legacy Team\"\n"
+      stdout, stderr, status = run_identity_verifier(certificate_path, legacy_identity)
+      assert status.success?, [stdout, stderr].join("\n")
+      assert_includes stdout, "available as a valid code-signing identity"
+
+      wrong_identity = "  1) #{certificate_fingerprint(other_certificate)} \"Apple Distribution: Wrong Team\"\n"
+      _stdout, stderr, status = run_identity_verifier(certificate_path, wrong_identity)
+      refute status.success?
+      assert_includes stderr, "not available as a valid code-signing identity"
+    end
+  end
+
   private
 
   def make_certificate(common_name)
@@ -97,6 +117,10 @@ class SigningContractTest < Minitest::Test
     certificate.not_after = Time.now + 3600
     certificate.sign(key, OpenSSL::Digest::SHA256.new)
     [key, certificate]
+  end
+
+  def certificate_fingerprint(certificate)
+    OpenSSL::Digest::SHA1.hexdigest(certificate.to_der).upcase
   end
 
   def write_profile(directory, certificate, bundle_id, uuid)
@@ -132,5 +156,9 @@ class SigningContractTest < Minitest::Test
     ]
     profiles.each { |profile| command.concat(["--plist", profile]) }
     Open3.capture3(*command)
+  end
+
+  def run_identity_verifier(certificate_path, identities)
+    Open3.capture3("ruby", VERIFY_IDENTITY, certificate_path, stdin_data: identities)
   end
 end

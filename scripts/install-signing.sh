@@ -96,10 +96,8 @@ ruby -rjson -rfileutils -e '
   exit(ok ? 0 : 1)
 ' "$keychain_state" "$keychain_path"
 
-if ! security find-identity -v -p codesigning "$keychain_path" | grep -q 'Apple Distribution'; then
-  echo "No Apple Distribution identity was imported" >&2
-  exit 1
-fi
+security find-identity -v -p codesigning "$keychain_path" |
+  ruby "${IOS_BUILD_ACTION_PATH}/scripts/verify-code-signing-identity.rb" "$p12_certificate_path"
 
 profiles_install_dir="${HOME}/Library/MobileDevice/Provisioning Profiles"
 mkdir -p "$profiles_install_dir"
