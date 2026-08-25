@@ -38,6 +38,7 @@ chmod 600 "$p12_path" "$profiles_archive"
 
 P12_PASSWORD="$IOS_DISTRIBUTION_P12_PASSWORD" \
   openssl pkcs12 \
+    -legacy \
     -in "$p12_path" \
     -passin env:P12_PASSWORD \
     -clcerts \

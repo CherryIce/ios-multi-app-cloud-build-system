@@ -10,7 +10,49 @@ require "tmpdir"
 class SigningContractTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
   CONFIG = File.join(__dir__, "fixtures/config/valid.yml")
+  INSTALL_SIGNING = File.join(ROOT, "scripts/install-signing.sh")
   MAPPER = File.join(ROOT, "scripts/map-profiles.rb")
+
+  def test_signing_install_supports_legacy_pkcs12_encryption
+    script = File.read(INSTALL_SIGNING)
+
+    assert_includes script, "openssl pkcs12 \\\n    -legacy \\\n"
+
+    help_stdout, help_stderr, = Open3.capture3("openssl", "pkcs12", "-help")
+    skip "OpenSSL pkcs12 -legacy is required for this contract" unless [help_stdout, help_stderr].join.include?("-legacy")
+
+    Dir.mktmpdir do |directory|
+      key, certificate = make_identity("legacy-pkcs12")
+      key_path = File.join(directory, "key.pem")
+      certificate_path = File.join(directory, "certificate.pem")
+      p12_path = File.join(directory, "legacy.p12")
+      extracted_path = File.join(directory, "extracted.pem")
+      File.write(key_path, key.to_pem)
+      File.write(certificate_path, certificate.to_pem)
+      password_environment = { "SIGNING_TEST_P12_PASSWORD" => "test-only-password" }
+
+      stdout, stderr, status = Open3.capture3(
+        password_environment,
+        "openssl", "pkcs12", "-export", "-legacy",
+        "-inkey", key_path,
+        "-in", certificate_path,
+        "-out", p12_path,
+        "-passout", "env:SIGNING_TEST_P12_PASSWORD"
+      )
+      assert status.success?, [stdout, stderr].join("\n")
+
+      stdout, stderr, status = Open3.capture3(
+        password_environment,
+        "openssl", "pkcs12", "-legacy",
+        "-in", p12_path,
+        "-passin", "env:SIGNING_TEST_P12_PASSWORD",
+        "-clcerts", "-nokeys",
+        "-out", extracted_path
+      )
+      assert status.success?, [stdout, stderr].join("\n")
+      assert_equal certificate.to_der, OpenSSL::X509::Certificate.new(File.read(extracted_path)).to_der
+    end
+  end
 
   def test_profiles_must_include_the_imported_distribution_certificate
     skip "macOS plutil is required" unless File.executable?("/usr/bin/plutil")
@@ -40,6 +82,10 @@ class SigningContractTest < Minitest::Test
   private
 
   def make_certificate(common_name)
+    make_identity(common_name).last
+  end
+
+  def make_identity(common_name)
     key = OpenSSL::PKey::RSA.new(2048)
     certificate = OpenSSL::X509::Certificate.new
     certificate.version = 2
@@ -50,7 +96,7 @@ class SigningContractTest < Minitest::Test
     certificate.not_before = Time.now - 60
     certificate.not_after = Time.now + 3600
     certificate.sign(key, OpenSSL::Digest::SHA256.new)
-    certificate
+    [key, certificate]
   end
 
   def write_profile(directory, certificate, bundle_id, uuid)
