@@ -1,4 +1,4 @@
-# FLUTTER APP REPOSITORY TEMPLATE: replace the ASC App ID and review every value.
+# HEARTHIO FLUTTER APP CONFIG: review signing material before the first remote build.
 schema_version: 2
 
 release:
@@ -12,7 +12,7 @@ release:
 app:
   name: Hearthio
   team_id: LGN7SU938D
-  asc_app_id: "1234567890"
+  asc_app_id: "6804913721"
   primary_bundle_id: com.Hearthio.lite
   bundle_ids:
     - bundle_id: com.Hearthio.lite
@@ -29,7 +29,7 @@ flutter:
 build:
   container_type: workspace
   container_path: Hearthio/ios/Runner.xcworkspace
-  scheme: Runner
+  scheme: Run-Release
   configuration: Release
   runner: macos-26
   xcode_path: /Applications/Xcode_26.4.app

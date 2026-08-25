@@ -41,7 +41,7 @@ flutter:
 build:
   container_type: workspace
   container_path: Hearthio/ios/Runner.xcworkspace
-  scheme: Runner
+  scheme: Run-Release
   configuration: Release
   runner: macos-26
   xcode_path: /Applications/Xcode_26.4.app
@@ -52,6 +52,11 @@ build:
 `flutter.project_directory` 可以是 `.`，也可以是 `Hearthio` 这样的规范化仓库
 相对路径。`build.container_path` 必须位于该 Flutter 工程目录内。预检会解析
 真实路径并拒绝目录穿越或通过符号链接逃出仓库。
+
+Hearthio 的 Xcode target 名称仍是 `Runner`，因此
+`app.bundle_ids[].target` 必须写 `Runner`；`Run-Release` 是共享 scheme，写在
+`build.scheme`。首次设置 `upload_to_asc=false` 只是关闭上传，不会把 Archive
+改成 Profile；云构建仍使用 `Run-Release` 和 `Release` configuration。
 
 ## Flutter SDK
 
