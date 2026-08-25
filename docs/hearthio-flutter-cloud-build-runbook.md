@@ -213,7 +213,10 @@ cd ~/Desktop/DoneSome_Cer
 openssl base64 -A -in Hearthio_Distribution.p12 | pbcopy
 
 # 2. App Store profiles archive；归档里只能放 .mobileprovision
-tar -czf hearthio-profiles.tar.gz Heal_pro_file.mobileprovision
+# tar -czf hearthio-profiles.tar.gz Heal_pro_file.mobileprovision
+COPYFILE_DISABLE=1 tar --format=ustar -czf \
+  hearthio-profiles.tar.gz \
+  Heal_pro_file.mobileprovision
 openssl base64 -A -in hearthio-profiles.tar.gz | pbcopy
 
 # 3. App Store Connect API private key
