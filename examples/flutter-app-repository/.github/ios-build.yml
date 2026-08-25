@@ -11,7 +11,7 @@ release:
 
 app:
   name: Hearthio
-  team_id: LGN7SU938D
+  team_id: Z353FCBY9T
   asc_app_id: "6804913721"
   primary_bundle_id: com.Hearthio.lite
   bundle_ids:
