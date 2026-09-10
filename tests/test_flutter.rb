@@ -49,6 +49,58 @@ class FlutterContractTest < Minitest::Test
     end
   end
 
+  def test_flutter_dependencies_install_locked_bundle_before_cocoapods
+    Dir.mktmpdir do |directory|
+      workspace = File.join(directory, "workspace")
+      logs = File.join(directory, "logs")
+      bin = File.join(directory, "bin")
+      project = File.join(workspace, "Hearthio")
+      ios = File.join(project, "ios")
+      FileUtils.mkdir_p([logs, bin, ios])
+      File.write(File.join(project, "pubspec.lock"), "packages: {}\n")
+      File.write(File.join(project, "Gemfile"), "source \"https://rubygems.org\"\n")
+      File.write(File.join(project, "Gemfile.lock"), "GEM\n")
+      File.write(File.join(ios, "Podfile"), "platform :ios, '13.0'\n")
+      File.write(File.join(ios, "Podfile.lock"), "PODS: []\n")
+
+      bundle_capture = File.join(directory, "bundle-args.txt")
+      write_executable(File.join(bin, "flutter"), <<~SH)
+        #!/usr/bin/env bash
+        exit 0
+      SH
+      write_executable(File.join(bin, "bundle"), <<~SH)
+        #!/usr/bin/env bash
+        printf '%s\n' "$*" >> "#{bundle_capture}"
+        if [[ "$1" == "check" ]]; then
+          exit 1
+        fi
+      SH
+
+      system("git", "-C", workspace, "init", "-q")
+      system("git", "-C", workspace, "add", "-f", "Hearthio")
+
+      stdout, stderr, status = Open3.capture3(
+        {
+          "IOS_BUILD_ACTION_PATH" => ROOT,
+          "IOS_CONFIG_PATH" => CONFIG,
+          "IOS_BUILD_LOGS_DIR" => logs,
+          "IOS_FLUTTER_VERSION" => "3.35.7",
+          "GITHUB_WORKSPACE" => workspace,
+          "PATH" => "#{bin}:#{ENV.fetch('PATH')}"
+        },
+        "bash", File.join(ROOT, "scripts/install-dependencies.sh")
+      )
+
+      assert status.success?, [stdout, stderr].join("\n")
+      assert_equal [
+        "config set path vendor/bundle",
+        "check",
+        "install --jobs 4 --retry 3",
+        "exec pod install --project-directory=ios --deployment"
+      ], File.readlines(bundle_capture, chomp: true)
+    end
+  end
+
   def test_archive_passes_flutter_and_native_version_variables
     Dir.mktmpdir do |directory|
       workspace = File.join(directory, "workspace")

@@ -84,6 +84,10 @@ case "$mode" in
     if [[ -f ios/Podfile ]]; then
       require_tracked_file "${project_prefix}ios/Podfile.lock"
       if [[ -f Gemfile ]]; then
+        require_tracked_file "${project_prefix}Gemfile"
+        require_tracked_file "${project_prefix}Gemfile.lock"
+        bundle config set path vendor/bundle
+        bundle check || bundle install --jobs 4 --retry 3
         bundle exec pod install --project-directory=ios --deployment | tee -a "${IOS_BUILD_LOGS_DIR}/dependencies.log"
       else
         pod install --project-directory=ios --deployment | tee -a "${IOS_BUILD_LOGS_DIR}/dependencies.log"

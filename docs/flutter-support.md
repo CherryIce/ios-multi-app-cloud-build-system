@@ -72,6 +72,10 @@ Hearthio 的 Xcode target 名称仍是 `Runner`，因此
 - `pubspec.lock` 必须提交。
 - 存在 `ios/Podfile` 时，`ios/Podfile.lock` 也必须提交；依赖安装使用
   `pod install --deployment`。
+- 若 Flutter 工程包含 `Gemfile`，`Gemfile` 与 `Gemfile.lock` 都必须提交；中央
+  action 会先检查并安装锁定的 Bundler 依赖，再执行
+  `bundle exec pod install --deployment`。App 工作流还应使用 `ruby/setup-ruby`
+  固定 Ruby 版本，避免 CocoaPods 的 Podspec JSON checksum 随 runner 运行时漂移。
 - Archive 同时注入 `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` 和
   `FLUTTER_BUILD_NAME` / `FLUTTER_BUILD_NUMBER`。
 - 依赖安装若修改任何已跟踪文件，构建会失败，要求先提交锁定后的状态。
