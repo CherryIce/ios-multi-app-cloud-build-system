@@ -45,10 +45,15 @@ export:
 upload:
   enabled_by_default: false
   asc_key_type: team
-  wait_level: testflight_internal_ready
+  wait_level: processing_complete
   timeout_minutes: 45
   poll_interval_seconds: 30
   internal_beta_group_ids: []
+
+app_store:
+  enabled: true
+  metadata_path: .github/app-store-metadata.yml
+  automatic_release: true
 
 artifacts:
   retention_days: 30

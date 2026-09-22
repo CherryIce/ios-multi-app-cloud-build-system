@@ -15,6 +15,7 @@ class ConfigTest < Minitest::Test
     config = IOSBuild::Config.load_file(VALID)
     assert_equal "com.example.app", IOSBuild::Config.dig(config, "app.primary_bundle_id")
     assert_equal "github_run_number", IOSBuild::Config.dig(config, "versioning.build_number_strategy")
+    assert_equal true, IOSBuild::Config.dig(config, "app_store.automatic_release")
   end
 
   def test_invalid_fixture_fails_closed
@@ -27,8 +28,25 @@ class ConfigTest < Minitest::Test
   def test_schema_and_runtime_required_top_level_keys_match
     schema_path = File.join(ROOT, "schemas/ios-build-config.schema.json")
     schema = JSON.parse(File.read(schema_path))
-    assert_equal IOSBuild::Config::TOP_LEVEL_KEYS.sort, schema.fetch("required").sort
+    assert_equal IOSBuild::Config::REQUIRED_TOP_LEVEL_KEYS.sort, schema.fetch("required").sort
+    assert_equal IOSBuild::Config::TOP_LEVEL_KEYS.sort, schema.fetch("properties").keys.sort
     assert_equal 1, schema.dig("properties", "schema_version", "const")
+  end
+
+  def test_app_store_section_is_backward_compatible_when_absent
+    config = IOSBuild::Config.load_file(VALID, validate: false)
+    config.delete("app_store")
+
+    assert IOSBuild::Config.validate!(config)
+    assert_equal false, IOSBuild::Config.optional_dig(config, "app_store.enabled", false)
+  end
+
+  def test_app_store_requires_processing_complete_wait_level
+    config = IOSBuild::Config.load_file(VALID, validate: false)
+    config["upload"]["wait_level"] = "asc_appeared"
+
+    error = assert_raises(IOSBuild::ConfigError) { IOSBuild::Config.validate!(config) }
+    assert_includes error.message, "processing_complete or testflight_internal_ready"
   end
 
   def test_runtime_rejects_duplicate_release_and_group_values

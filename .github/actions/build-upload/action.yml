@@ -16,6 +16,10 @@ inputs:
     description: Whether to upload the validated IPA to App Store Connect.
     required: false
     default: "false"
+  submit_to_review:
+    description: Whether to submit the prepared App Store version to App Review after processing.
+    required: false
+    default: "false"
   ios_distribution_p12_base64:
     description: Base64-encoded Apple Distribution certificate and private key.
     required: true
@@ -35,6 +39,14 @@ inputs:
     default: ""
   asc_issuer_id:
     description: App Store Connect Team API Issuer ID.
+    required: false
+    default: ""
+  review_demo_account_name:
+    description: Optional App Review demo account name; pass from a protected secret when required.
+    required: false
+    default: ""
+  review_demo_account_password:
+    description: Optional App Review demo account password; pass from a protected secret when required.
     required: false
     default: ""
 
@@ -69,6 +81,21 @@ outputs:
   testflight_internal_state:
     description: Final observed internal TestFlight state.
     value: ${{ steps.upload.outputs.testflight_internal_state }}
+  app_store_version_id:
+    description: App Store version resource ID when App Store preparation is enabled.
+    value: ${{ steps.app_store.outputs.app_store_version_id }}
+  app_store_version_state:
+    description: App Store version state observed during preparation or submission.
+    value: ${{ steps.app_store.outputs.app_store_version_state }}
+  review_submission_id:
+    description: Review submission resource ID when the App Store version is submitted.
+    value: ${{ steps.app_store.outputs.review_submission_id }}
+  review_submission_state:
+    description: Review submission state returned by App Store Connect.
+    value: ${{ steps.app_store.outputs.review_submission_state }}
+  review_submitted:
+    description: Whether this run submitted or confirmed an existing review submission.
+    value: ${{ steps.app_store.outputs.review_submitted }}
 
 runs:
   using: composite
@@ -89,6 +116,7 @@ runs:
         IOS_MARKETING_VERSION: ${{ inputs.marketing_version }}
         IOS_BUILD_NUMBER: ${{ inputs.build_number }}
         IOS_UPLOAD_TO_ASC: ${{ inputs.upload_to_asc }}
+        IOS_SUBMIT_TO_REVIEW: ${{ inputs.submit_to_review }}
       run: bash "$IOS_BUILD_ACTION_PATH/scripts/preflight.sh"
 
     - name: Prepare ASC key for build number resolution
@@ -191,8 +219,8 @@ runs:
         ASC_ISSUER_ID: ${{ inputs.asc_issuer_id }}
       run: bash "$IOS_BUILD_ACTION_PATH/scripts/prepare-asc-key.sh"
 
-    - name: Upload and verify App Store Connect state
-      id: upload
+    - name: Upload validated IPA to App Store Connect
+      id: send_upload
       if: ${{ success() && inputs.upload_to_asc == 'true' }}
       shell: bash
       env:
@@ -203,6 +231,71 @@ runs:
         ASC_KEY_ID: ${{ inputs.asc_key_id }}
         ASC_ISSUER_ID: ${{ inputs.asc_issuer_id }}
       run: bash "$IOS_BUILD_ACTION_PATH/scripts/upload.sh"
+
+    - name: Create or update App Store version and metadata
+      id: app_store_prepare
+      if: ${{ success() && inputs.upload_to_asc == 'true' && steps.preflight.outputs.app_store_enabled == 'true' }}
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_MARKETING_VERSION: ${{ steps.preflight.outputs.marketing_version }}
+        ASC_KEY_PATH: ${{ steps.asc_key_for_upload.outputs.asc_key_path }}
+        ASC_KEY_ID: ${{ inputs.asc_key_id }}
+        ASC_ISSUER_ID: ${{ inputs.asc_issuer_id }}
+        ASC_REVIEW_DEMO_ACCOUNT_NAME: ${{ inputs.review_demo_account_name }}
+        ASC_REVIEW_DEMO_ACCOUNT_PASSWORD: ${{ inputs.review_demo_account_password }}
+      run: |
+        ruby "$IOS_BUILD_ACTION_PATH/scripts/release-app-store.rb" \
+          --config "$IOS_CONFIG_PATH" \
+          --phase prepare \
+          --marketing-version "$IOS_MARKETING_VERSION" \
+          --key-id "$ASC_KEY_ID" \
+          --issuer-id "$ASC_ISSUER_ID" \
+          --key-path "$ASC_KEY_PATH" \
+          --submit-to-review false \
+          --output "$IOS_BUILD_OUTPUT_DIR/app-store-status.json" \
+          --github-output "$GITHUB_OUTPUT"
+
+    - name: Wait for App Store Connect processing
+      id: upload
+      if: ${{ success() && inputs.upload_to_asc == 'true' }}
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_MARKETING_VERSION: ${{ steps.preflight.outputs.marketing_version }}
+        IOS_RESOLVED_BUILD_NUMBER: ${{ steps.resolve.outputs.build_number }}
+        ASC_KEY_PATH: ${{ steps.asc_key_for_upload.outputs.asc_key_path }}
+        ASC_KEY_ID: ${{ inputs.asc_key_id }}
+        ASC_ISSUER_ID: ${{ inputs.asc_issuer_id }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/wait-upload.sh"
+
+    - name: Attach processed build and optionally submit for review
+      id: app_store
+      if: ${{ success() && inputs.upload_to_asc == 'true' && steps.preflight.outputs.app_store_enabled == 'true' }}
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_MARKETING_VERSION: ${{ steps.preflight.outputs.marketing_version }}
+        ASC_KEY_PATH: ${{ steps.asc_key_for_upload.outputs.asc_key_path }}
+        ASC_KEY_ID: ${{ inputs.asc_key_id }}
+        ASC_ISSUER_ID: ${{ inputs.asc_issuer_id }}
+        ASC_REVIEW_DEMO_ACCOUNT_NAME: ${{ inputs.review_demo_account_name }}
+        ASC_REVIEW_DEMO_ACCOUNT_PASSWORD: ${{ inputs.review_demo_account_password }}
+      run: |
+        ruby "$IOS_BUILD_ACTION_PATH/scripts/release-app-store.rb" \
+          --config "$IOS_CONFIG_PATH" \
+          --phase finalize \
+          --marketing-version "$IOS_MARKETING_VERSION" \
+          --status "$IOS_BUILD_OUTPUT_DIR/asc-status.json" \
+          --key-id "$ASC_KEY_ID" \
+          --issuer-id "$ASC_ISSUER_ID" \
+          --key-path "$ASC_KEY_PATH" \
+          --submit-to-review "${{ inputs.submit_to_review }}" \
+          --output "$IOS_BUILD_OUTPUT_DIR/app-store-status.json" \
+          --github-output "$GITHUB_OUTPUT"
 
     - name: Collect upload diagnostics
       if: ${{ always() && steps.init.outcome == 'success' }}
@@ -219,6 +312,7 @@ runs:
         name: ios-upload-status-${{ github.run_id }}-${{ github.run_attempt }}
         path: |
           ${{ steps.init.outputs.output_dir }}/asc-status.json
+          ${{ steps.init.outputs.output_dir }}/app-store-status.json
           ${{ steps.init.outputs.output_dir }}/build-metadata.json
           ${{ steps.init.outputs.output_dir }}/logs/upload.log
         if-no-files-found: warn

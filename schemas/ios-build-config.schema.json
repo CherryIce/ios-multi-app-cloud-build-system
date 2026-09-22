@@ -274,6 +274,22 @@
         }
       ]
     },
+    "app_store": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "metadata_path", "automatic_release"],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "metadata_path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "automatic_release": {
+          "type": "boolean"
+        }
+      }
+    },
     "artifacts": {
       "type": "object",
       "additionalProperties": false,
@@ -290,6 +306,34 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": ["app_store"],
+        "properties": {
+          "app_store": {
+            "required": ["enabled"],
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "upload": {
+            "properties": {
+              "wait_level": {
+                "enum": ["processing_complete", "testflight_internal_ready"]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "bundleId": {
       "type": "string",

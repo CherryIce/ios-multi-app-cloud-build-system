@@ -9,7 +9,8 @@ module IOSBuild
   module Config
     module_function
 
-    TOP_LEVEL_KEYS = %w[schema_version release app build versioning export upload artifacts].freeze
+    TOP_LEVEL_KEYS = %w[schema_version release app build versioning export upload app_store artifacts].freeze
+    REQUIRED_TOP_LEVEL_KEYS = %w[schema_version release app build versioning export upload artifacts].freeze
     RELEASE_KEYS = %w[allowed_events allowed_ref_patterns].freeze
     APP_KEYS = %w[name team_id asc_app_id primary_bundle_id bundle_ids].freeze
     BUNDLE_KEYS = %w[bundle_id target profile_alias].freeze
@@ -25,6 +26,7 @@ module IOSBuild
       enabled_by_default asc_key_type wait_level timeout_minutes poll_interval_seconds
       internal_beta_group_ids
     ].freeze
+    APP_STORE_KEYS = %w[enabled metadata_path automatic_release].freeze
     ARTIFACT_KEYS = %w[retention_days keep_xcarchive].freeze
 
     BUNDLE_ID_PATTERN = /\A[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\z/
@@ -72,7 +74,7 @@ module IOSBuild
 
     def validate!(data)
       errors = []
-      exact_keys(data, TOP_LEVEL_KEYS, "root", errors)
+      exact_keys(data, TOP_LEVEL_KEYS, "root", errors, required: REQUIRED_TOP_LEVEL_KEYS)
       integer_value(data, "schema_version", "root", errors, allowed: [1])
 
       release = mapping(data, "release", "root", errors)
@@ -81,6 +83,8 @@ module IOSBuild
       versioning = mapping(data, "versioning", "root", errors)
       export = mapping(data, "export", "root", errors)
       upload = mapping(data, "upload", "root", errors)
+      app_store = data["app_store"]
+      errors << "root.app_store must be a mapping" if !app_store.nil? && !app_store.is_a?(Hash)
       artifacts = mapping(data, "artifacts", "root", errors)
 
       validate_release(release, errors) if release
@@ -89,6 +93,7 @@ module IOSBuild
       validate_versioning(versioning, errors) if versioning
       validate_export(export, errors) if export
       validate_upload(upload, errors) if upload
+      validate_app_store(app_store, upload, errors) if app_store.is_a?(Hash)
       validate_artifacts(artifacts, errors) if artifacts
 
       raise ConfigError, errors.join("\n") unless errors.empty?
@@ -220,17 +225,29 @@ module IOSBuild
       end
     end
 
+    def validate_app_store(app_store, upload, errors)
+      exact_keys(app_store, APP_STORE_KEYS, "app_store", errors)
+      enabled = boolean_value(app_store, "enabled", "app_store", errors)
+      metadata_path = string_value(app_store, "metadata_path", "app_store", errors)
+      validate_relative_path(metadata_path, "app_store.metadata_path", errors)
+      boolean_value(app_store, "automatic_release", "app_store", errors)
+
+      if enabled && upload && !%w[processing_complete testflight_internal_ready].include?(upload["wait_level"])
+        errors << "upload.wait_level must be processing_complete or testflight_internal_ready when app_store.enabled is true"
+      end
+    end
+
     def validate_artifacts(artifacts, errors)
       exact_keys(artifacts, ARTIFACT_KEYS, "artifacts", errors)
       integer_value(artifacts, "retention_days", "artifacts", errors, range: 1..90)
       boolean_value(artifacts, "keep_xcarchive", "artifacts", errors)
     end
 
-    def exact_keys(mapping, allowed, path, errors)
+    def exact_keys(mapping, allowed, path, errors, required: allowed)
       return unless mapping.is_a?(Hash)
 
       unknown = mapping.keys - allowed
-      missing = allowed - mapping.keys
+      missing = required - mapping.keys
       errors << "#{path} contains unknown keys: #{unknown.join(', ')}" unless unknown.empty?
       errors << "#{path} is missing required keys: #{missing.join(', ')}" unless missing.empty?
     end
@@ -298,6 +315,14 @@ module IOSBuild
     def dig(data, dotted_path)
       dotted_path.split(".").reduce(data) do |value, key|
         raise ConfigError, "missing configuration value: #{dotted_path}" unless value.is_a?(Hash) && value.key?(key)
+
+        value[key]
+      end
+    end
+
+    def optional_dig(data, dotted_path, default = nil)
+      dotted_path.split(".").reduce(data) do |value, key|
+        return default unless value.is_a?(Hash) && value.key?(key)
 
         value[key]
       end

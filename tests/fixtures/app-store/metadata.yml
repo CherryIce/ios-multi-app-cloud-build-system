@@ -1,0 +1,19 @@
+copyright: "2026 Example Company"
+uses_idfa: false
+uses_non_exempt_encryption: false
+
+localizations:
+  en-US:
+    whats_new: "Improved reliability."
+    support_url: "https://example.com/support"
+  zh-Hans:
+    whats_new: "提升了稳定性。"
+    support_url: "https://example.com/support"
+
+review_detail:
+  contact_first_name: "Release"
+  contact_last_name: "Manager"
+  contact_email: "release@example.com"
+  contact_phone: "+1 555 0100"
+  demo_account_required: false
+  notes: "No sign-in is required."

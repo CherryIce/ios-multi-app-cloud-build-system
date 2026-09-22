@@ -75,6 +75,10 @@ module IOSBuild
         request(:post, path, payload: payload)
       end
 
+      def patch(path, payload)
+        request(:patch, path, payload: payload)
+      end
+
       def request(method, path, query: nil, payload: nil)
         uri = if path.start_with?("http://", "https://")
                 URI(path)
@@ -83,7 +87,16 @@ module IOSBuild
               end
         uri.query = URI.encode_www_form(query) if query && !query.empty?
 
-        request = method == :post ? Net::HTTP::Post.new(uri) : Net::HTTP::Get.new(uri)
+        request = case method
+                  when :get
+                    Net::HTTP::Get.new(uri)
+                  when :post
+                    Net::HTTP::Post.new(uri)
+                  when :patch
+                    Net::HTTP::Patch.new(uri)
+                  else
+                    raise ArgumentError, "unsupported HTTP method: #{method}"
+                  end
         request["Authorization"] = "Bearer #{@token.generate}"
         request["Accept"] = "application/json"
         if payload
@@ -101,7 +114,7 @@ module IOSBuild
 
         unless response.is_a?(Net::HTTPSuccess)
           raise APIError.new(
-            "App Store Connect API returned HTTP #{response.code}",
+            error_message(response),
             status: response.code.to_i,
             body: response.body
           )
@@ -128,6 +141,24 @@ module IOSBuild
           next_query = nil
         end
         records
+      end
+
+      private
+
+      def error_message(response)
+        prefix = "App Store Connect API returned HTTP #{response.code}"
+        parsed = JSON.parse(response.body.to_s)
+        error = Array(parsed["errors"]).first
+        return prefix unless error
+
+        details = [error["code"], error["title"], error["detail"]]
+                  .compact
+                  .map { |value| value.to_s.gsub(/[\r\n]+/, " ").strip }
+                  .reject(&:empty?)
+                  .join(": ")
+        details.empty? ? prefix : "#{prefix}: #{details[0, 1000]}"
+      rescue JSON::ParserError
+        prefix
       end
     end
   end

@@ -1,0 +1,29 @@
+# APP REPOSITORY TEMPLATE: commit only non-sensitive App Store metadata here.
+# Demo account credentials, when required, must come from protected GitHub secrets.
+copyright: "2026 Example Company"
+uses_idfa: false
+uses_non_exempt_encryption: false
+
+localizations:
+  en-US:
+    whats_new: "Performance improvements and bug fixes."
+    description: "Example App description."
+    keywords: "example,productivity"
+    promotional_text: "A focused way to get things done."
+    support_url: "https://example.com/support"
+    marketing_url: "https://example.com"
+  zh-Hans:
+    whats_new: "性能优化与问题修复。"
+    description: "Example App 应用描述。"
+    keywords: "示例,效率"
+    promotional_text: "更专注地完成任务。"
+    support_url: "https://example.com/support"
+    marketing_url: "https://example.com"
+
+review_detail:
+  contact_first_name: "Release"
+  contact_last_name: "Manager"
+  contact_email: "release@example.com"
+  contact_phone: "+1 555 0100"
+  demo_account_required: false
+  notes: "No sign-in is required for this version."

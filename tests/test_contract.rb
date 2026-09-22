@@ -5,6 +5,7 @@ require "minitest/autorun"
 require "open3"
 require "tmpdir"
 require "yaml"
+require_relative "../scripts/lib/app_store_metadata"
 
 class ContractTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
@@ -40,10 +41,43 @@ class ContractTest < Minitest::Test
     end
   end
 
+  def test_app_store_version_is_prepared_before_processing_wait_and_submission
+    action_text = File.read(ACTION_PATH)
+    upload = action_text.index("Upload validated IPA to App Store Connect")
+    prepare = action_text.index("Create or update App Store version and metadata")
+    wait = action_text.index("Wait for App Store Connect processing")
+    submit = action_text.index("Attach processed build and optionally submit for review")
+
+    refute_nil upload
+    assert_operator upload, :<, prepare
+    assert_operator prepare, :<, wait
+    assert_operator wait, :<, submit
+  end
+
+  def test_processing_wait_receives_the_resolved_build_number
+    action = YAML.load_file(ACTION_PATH)
+    wait_step = action.fetch("runs").fetch("steps").find do |step|
+      step["name"] == "Wait for App Store Connect processing"
+    end
+
+    refute_nil wait_step
+    assert_equal "${{ steps.resolve.outputs.build_number }}",
+                 wait_step.fetch("env").fetch("IOS_RESOLVED_BUILD_NUMBER")
+  end
+
   def test_app_repository_config_matches_runtime_contract
     config_path = File.join(ROOT, "examples/app-repository/.github/ios-build.yml")
     script_path = File.join(ROOT, "scripts/validate-config.rb")
     assert system("ruby", script_path, config_path, out: File::NULL)
+  end
+
+  def test_example_app_store_metadata_matches_runtime_contract_and_has_no_demo_credentials
+    metadata_path = File.join(ROOT, "examples/app-repository/.github/app-store-metadata.yml")
+    metadata = IOSBuild::ASC::AppStoreMetadata.load_file(metadata_path)
+    assert_equal false, metadata["review_detail"]["demo_account_required"]
+
+    text = File.read(metadata_path)
+    refute_match(/demo_account_(?:name|password)/, text)
   end
 
   def test_plist_converter_handles_provisioning_profile_value_types

@@ -6,6 +6,7 @@ require "open3"
 require "optparse"
 require "pathname"
 require "time"
+require_relative "lib/app_store_metadata"
 require_relative "lib/config"
 
 options = {}
@@ -14,6 +15,7 @@ OptionParser.new do |parser|
   parser.on("--marketing-version VERSION") { |value| options[:marketing_version] = value }
   parser.on("--build-number NUMBER") { |value| options[:build_number] = value }
   parser.on("--upload-to-asc BOOLEAN") { |value| options[:upload_to_asc] = value }
+  parser.on("--submit-to-review BOOLEAN") { |value| options[:submit_to_review] = value }
   parser.on("--metadata PATH") { |value| options[:metadata] = value }
   parser.on("--github-output PATH") { |value| options[:github_output] = value }
 end.parse!
@@ -24,7 +26,7 @@ def fail_with(message)
 end
 
 begin
-  required_options = %i[config marketing_version upload_to_asc metadata github_output]
+  required_options = %i[config marketing_version upload_to_asc submit_to_review metadata github_output]
   missing = required_options.reject { |key| options.key?(key) && !options[key].to_s.empty? }
   abort "missing options: #{missing.join(', ')}" unless missing.empty?
 
@@ -75,6 +77,25 @@ begin
 
   upload_to_asc = options.fetch(:upload_to_asc)
   fail_with("upload_to_asc must be true or false") unless %w[true false].include?(upload_to_asc)
+  submit_to_review = options.fetch(:submit_to_review)
+  fail_with("submit_to_review must be true or false") unless %w[true false].include?(submit_to_review)
+
+  app_store_enabled = IOSBuild::Config.optional_dig(config, "app_store.enabled", false)
+  if submit_to_review == "true" && upload_to_asc != "true"
+    fail_with("submit_to_review requires upload_to_asc=true")
+  end
+  if submit_to_review == "true" && !app_store_enabled
+    fail_with("submit_to_review requires app_store.enabled=true")
+  end
+  if app_store_enabled
+    metadata_path = IOSBuild::Config.dig(config, "app_store.metadata_path")
+    metadata_candidate = File.expand_path(metadata_path, workspace_real)
+    metadata_real = File.realpath(metadata_candidate)
+    unless metadata_real.start_with?(workspace_real + File::SEPARATOR)
+      fail_with("App Store metadata path must remain inside GITHUB_WORKSPACE")
+    end
+    IOSBuild::ASC::AppStoreMetadata.load_file(metadata_real)
+  end
 
   container_path = IOSBuild::Config.dig(config, "build.container_path")
   container_real = File.realpath(File.join(workspace_real, container_path))
@@ -98,6 +119,8 @@ begin
     "marketing_version" => marketing_version,
     "requested_build_number" => build_number,
     "upload_to_asc" => upload_to_asc == "true",
+    "app_store_enabled" => app_store_enabled,
+    "submit_to_review" => submit_to_review == "true",
     "created_at" => Time.now.utc.iso8601
   }
 
@@ -109,12 +132,14 @@ begin
     output.puts "marketing_version=#{marketing_version}"
     output.puts "requested_build_number=#{build_number}"
     output.puts "upload_to_asc=#{upload_to_asc}"
+    output.puts "app_store_enabled=#{app_store_enabled}"
+    output.puts "submit_to_review=#{submit_to_review}"
     output.puts "source_sha=#{source_sha}"
     output.puts "build_number_strategy=#{IOSBuild::Config.dig(config, 'versioning.build_number_strategy')}"
     output.puts "retention_days=#{IOSBuild::Config.dig(config, 'artifacts.retention_days')}"
   end
 
   puts "Preflight passed for #{source_ref} at #{source_sha}"
-rescue Errno::ENOENT, IOSBuild::ConfigError, KeyError => e
+rescue Errno::ENOENT, IOSBuild::ASC::MetadataError, IOSBuild::ConfigError, KeyError => e
   fail_with(e.message)
 end

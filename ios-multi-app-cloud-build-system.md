@@ -1,10 +1,10 @@
 # iOS 多 App 通用云打包与 TestFlight 自动上传实施方案
 
-> 文档版本：1.1<br>
-> 更新日期：2026-08-24<br>
-> 适用范围：多个独立 iOS App 仓库，共用一套 GitHub Actions 构建、签名、导出、上传及 App Store Connect 状态确认能力。
+> 文档版本：1.2<br>
+> 更新日期：2026-09-22<br>
+> 适用范围：多个独立 iOS App 仓库，共用一套 GitHub Actions 构建、签名、导出、上传、App Store Connect 状态确认、商店版本准备和可选提审能力。
 
-> 实现状态：仓库根目录中的 composite action、`scripts/`、JSON Schema 和 `tests/` 是当前参考实现；`examples/` 与 `ios-multi-app-cloud-build-system-additions/examples/` 都是需要补齐工程值和密钥接线的伪代码/迁移草稿，不承诺可直接运行。当前自测只覆盖配置、脚本契约和模拟 ASC 响应，不代表真实 App 已完成 Archive、签名、上传或 TestFlight 验证。
+> 实现状态：仓库根目录中的 composite action、`scripts/`、JSON Schema 和 `tests/` 是当前参考实现；`examples/` 与 `ios-multi-app-cloud-build-system-additions/examples/` 都是需要补齐工程值和密钥接线的伪代码/迁移草稿，不承诺可直接运行。当前自测只覆盖配置、脚本契约和模拟 ASC 响应，不代表真实 App 已完成 Archive、签名、上传、TestFlight、App Review 提交或自动发布验证。
 
 ## 1. 结论
 
@@ -22,7 +22,10 @@
 8. 无论后续上传是否成功，都保存必要产物和诊断日志。
 9. 上传 IPA 到 App Store Connect。
 10. 查询 Apple 的异步处理状态，区分“上传命令成功”“Apple 已接收”“处理完成”和“TestFlight 可测试”。
-11. 清理 runner 中的临时 Keychain、证书、profiles 和 `.p8`。
+11. 可选地创建或复用指定商店版本并同步版本元数据。
+12. 绑定精确 build，并在显式 `submit_to_review=true` 时提交 App Review。
+13. 配置审核通过后自动发布或等待人工发布。
+14. 清理 runner 中的临时 Keychain、证书、profiles 和 `.p8`。
 
 推荐的生产架构不是“所有密钥都放在中央仓库”，而是由每个 App 仓库保管自己的签名材料，中央仓库只提供经过版本固定的执行逻辑。
 
@@ -83,6 +86,8 @@ App C：Repository/Organization Secrets ─┘
 - App Store Connect 上传。
 - Apple 异步处理状态轮询。
 - 可选的 TestFlight 内测分组分发。
+- 可选的 App Store version 创建/复用、文本元数据同步、精确 build 绑定和 App Review 提交。
+- 自动发布或人工发布策略配置。
 - 日志、元数据和构建产物留存。
 
 ### 3.2 系统默认不负责
@@ -91,7 +96,8 @@ App C：Repository/Organization Secrets ─┘
 - 自动接受 Apple 最新协议。
 - 自动创建首次 App Store Connect App 记录。
 - 自动修改业务代码来解决编译或签名问题。
-- 自动提交 App Store 审核。
+- 在未显式设置 `submit_to_review=true` 时提交 App Store 审核。
+- 上传新的 App Store 截图或 App Preview；当前版本依赖 ASC 从已发布版本复制的媒体资源。
 - 自动通过 TestFlight 外部测试审核。
 - 自动决定出口合规、加密声明或隐私合规答案。
 - 自动创建或轮换 Apple Distribution 证书，除非后续单独采用 Xcode cloud-managed signing 方案。
@@ -257,10 +263,15 @@ export:
 upload:
   enabled_by_default: false
   asc_key_type: team
-  wait_level: testflight_internal_ready
+  wait_level: processing_complete
   timeout_minutes: 45
   poll_interval_seconds: 30
   internal_beta_group_ids: []
+
+app_store:
+  enabled: true
+  metadata_path: .github/app-store-metadata.yml
+  automatic_release: true
 
 artifacts:
   retention_days: 30
@@ -276,6 +287,10 @@ artifacts:
 - `profile_alias` 只用于把 Bundle ID 与解码后的 profile 对应起来，不是 Secret 名称。
 - `build.runner` 是供评审和记录使用的预期 runner；真正的 job runner 仍由 App workflow 的 `runs-on` 决定，两处必须保持一致。
 - `upload.enabled_by_default` 是模板建议值，不会越过 workflow input；参考 workflow 默认仍不上传。
+- `app_store` 为可选配置段；缺失或 `enabled=false` 时保持原有 Build/TestFlight 行为。
+- `app_store.enabled=true` 时，`upload.wait_level` 必须为 `processing_complete` 或 `testflight_internal_ready`。
+- `app_store.metadata_path` 只能指向 App 仓库内的安全 YAML；每个 locale 必须提供非空 `whats_new`。
+- `app_store.automatic_release=true` 只控制审核通过后的发布方式，不代表审核已经通过。
 - 自定义依赖命令只能来自受保护分支中的配置，不能让 `workflow_dispatch` 接受任意 shell 字符串。
 
 ## 7. Secrets 设计
@@ -495,6 +510,11 @@ on:
         required: true
         default: false
         type: boolean
+      submit_to_review:
+        description: Submit the prepared version to App Review
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -524,12 +544,15 @@ jobs:
           marketing_version: ${{ inputs.marketing_version }}
           build_number: ${{ inputs.build_number }}
           upload_to_asc: ${{ inputs.upload_to_asc }}
+          submit_to_review: ${{ inputs.submit_to_review }}
           ios_distribution_p12_base64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
           ios_distribution_p12_password: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
           ios_profiles_archive_base64: ${{ secrets.IOS_PROFILES_ARCHIVE_BASE64 }}
           asc_api_key_p8_base64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
           asc_key_id: ${{ secrets.ASC_KEY_ID }}
           asc_issuer_id: ${{ secrets.ASC_ISSUER_ID }}
+          review_demo_account_name: ${{ secrets.ASC_REVIEW_DEMO_ACCOUNT_NAME }}
+          review_demo_account_password: ${{ secrets.ASC_REVIEW_DEMO_ACCOUNT_PASSWORD }}
 ```
 
 说明：
@@ -551,6 +574,7 @@ jobs:
 | `marketing_version` | 只接受项目允许的版本格式 |
 | `build_number` | 空或只接受项目允许的数字格式 |
 | `upload_to_asc` | Boolean |
+| `submit_to_review` | Boolean；为 `true` 时要求 `upload_to_asc=true` 且 `app_store.enabled=true` |
 
 ### 11.2 标准输出
 
@@ -566,6 +590,11 @@ jobs:
 | `asc_upload_state` | `COMPLETE` |
 | `asc_processing_state` | `VALID` |
 | `testflight_internal_state` | `READY_FOR_BETA_TESTING` |
+| `app_store_version_id` | Apple App Store version resource ID |
+| `app_store_version_state` | `PREPARE_FOR_SUBMISSION`、`WAITING_FOR_REVIEW` 等 |
+| `review_submission_id` | Apple Review Submission resource ID |
+| `review_submission_state` | `WAITING_FOR_REVIEW`、`IN_REVIEW` 等 |
+| `review_submitted` | `true` / `false` |
 
 ### 11.3 失败原则
 
@@ -1092,7 +1121,7 @@ GET /v1/builds?filter[app]={asc_app_id}&filter[version]={build_number}
 | `processing_complete` | BuildUpload `COMPLETE` 且 Build `VALID` |
 | `testflight_internal_ready` | `READY_FOR_BETA_TESTING` 或 `IN_BETA_TESTING` |
 
-推荐 production 默认使用 `testflight_internal_ready`。
+只做 TestFlight 内测时推荐 `testflight_internal_ready`；启用 App Store 提交流程时推荐 `processing_complete`，随后由发布步骤处理可选出口合规字段并绑定 build。
 
 失败处理：
 
@@ -1120,7 +1149,38 @@ Apple 明确说明 build 上传后需要在其系统中异步处理，处理完�
 
 失败处理：构建和上传状态仍可记录为成功，但整个“自动分发”阶段标记失败或部分成功，不能隐藏分组失败。
 
-### 步骤 18：清理
+### 步骤 18：两阶段准备 App Store 版本并可选提审
+
+做什么：上传命令被 Apple 接收后立即创建或复用精确 marketing version 的商店版本并同步非敏感元数据；随后等待 build 处理为 `VALID`，绑定精确 build，并在显式授权时提交 App Review。实现中的 prepare 阶段位于步骤 15 与步骤 16 之间，finalize 阶段位于步骤 16/17 之后。
+
+怎么做：
+
+1. 只有 `app_store.enabled=true` 且 `upload_to_asc=true` 才进入此阶段。
+2. Prepare：按 `app + IOS + versionString` 查询 App Store version；存在则复用，不存在则在确认版本高于当前已发布版本后创建。
+3. Prepare：`automatic_release=true` 映射为 `releaseType=AFTER_APPROVAL`；否则使用 `MANUAL`。
+4. Prepare：从仓库内的 metadata YAML 增量创建或更新各 locale 的版本文本。每个配置 locale 必须包含 `whats_new`，未配置的 ASC locale 不删除。
+5. Prepare：App Review 联系信息可由 metadata YAML 更新；需要登录时，账号和密码必须由受保护 Secrets 输入，不能写入仓库或 Artifact。
+6. 等待：执行步骤 16 的精确 build 轮询；可选执行步骤 17 的 TestFlight 分组。
+7. Finalize：重新读取精确 `asc_build_id` 和 build number，确认 `processingState=VALID` 且关联 prerelease version 等于本次 marketing version。
+8. Finalize：可选地更新 `usesNonExemptEncryption`，随后修改并再次读取 App Store version 的 build relationship，确认绑定的是精确 build。
+9. Finalize：`submit_to_review=false` 时在版本准备完成后停止；为 `true` 时创建或复用 iOS Review Submission、创建版本 item，并设置 `submitted=true`，再读取提交状态确认已经离开草稿状态。
+10. 重跑时识别现有版本、草稿提交和已经进入 `WAITING_FOR_REVIEW`/`IN_REVIEW` 的提交，不重复创建或重复提交。
+
+成功判据：
+
+- 新建或可编辑版本的 Prepare 成功：`app-store-status.json` 包含 App Store version ID 和 `metadata_synced=true`；Finalize 成功后还包含精确 build ID 和 `build_attached=true`。
+- 提审阶段：Review Submission 有稳定 ID，API 返回 `WAITING_FOR_REVIEW` 或后续状态；不能只凭 workflow 绿色就声称审核通过。
+- 自动发布：只证明商店版本设置为审核后自动发布。实际审核通过和商店可见仍是后续独立证据。
+
+失败处理：
+
+- 已有不同版本占用可编辑/审核状态、版本号不递增、build 不属于目标 marketing version、metadata 缺失或 Apple 拒绝提审时立即失败。
+- 保留不含凭据的 `app-store-status.json`；重跑应从 ASC 当前状态继续，不重新创建相同版本。
+- 截图、App Preview 或其他未由本实现管理的必填项缺失时，由 Apple 提审校验返回错误；调用方应先在 ASC 或独立媒体上传流程补齐。
+
+Apple 提供创建 App Store version、修改版本 build relationship、Review Submission 和 Review Submission Item API。[A13][A14][A15][A16]
+
+### 步骤 19：清理
 
 做什么：无论成功、失败、取消或超时，都移除敏感材料。
 
@@ -1152,6 +1212,9 @@ Apple 明确说明 build 上传后需要在其系统中异步处理，处理完�
 | 7 | Apple 处理完成 | BuildUpload `COMPLETE` + Build `VALID` |
 | 8 | TestFlight 内测可用 | `READY_FOR_BETA_TESTING` 或 `IN_BETA_TESTING` |
 | 9 | 已分发测试组 | build 与目标 beta group 关系确认 |
+| 10 | 商店版本已准备 | App Store version ID + metadata/build relationship 复查 |
+| 11 | 已提交审核 | Review Submission ID + `WAITING_FOR_REVIEW` 或后续状态 |
+| 12 | 审核通过并已发布 | App Store version 的已发布状态与商店可见性 |
 
 标准成功摘要示例：
 
@@ -1167,6 +1230,8 @@ Build upload state: COMPLETE
 Processing state: VALID
 TestFlight internal state: READY_FOR_BETA_TESTING
 Tester group assignment: not requested
+App Store version: prepared, automatic release after approval
+Review submission: WAITING_FOR_REVIEW
 ```
 
 ## 14. 安全基线
@@ -1302,6 +1367,8 @@ app-a-appstore：只保存 P8              → 下载已校验 IPA 并上传 ASC
 - [ ] 最新协议已接受。
 - [ ] 出口合规策略已确定。
 - [ ] 如需分发，TestFlight 测试组已创建。
+- [ ] 如需自动提审，API Key 具备 App Manager、Admin 或等效提交权限。
+- [ ] 当前已发布版本、目标版本和 ASC 中其他编辑/审核版本不存在冲突。
 
 ### GitHub
 
@@ -1328,11 +1395,15 @@ app-a-appstore：只保存 P8              → 下载已校验 IPA 并上传 ASC
 - [ ] Artifact 在上传前保存。
 - [ ] ASC 使用 App/version/build 精确查询。
 - [ ] TestFlight 成功标准不是“上传命令返回 0”。
+- [ ] App Store metadata 每个配置 locale 都有 `whats_new`，且没有提交 demo 密码。
+- [ ] `submit_to_review` 默认关闭，只在预期发布运行中显式开启。
+- [ ] 精确 build relationship 与 Review Submission 状态均已复查。
+- [ ] `automatic_release=true` 没有被误报为“审核通过”或“已经上架”。
 - [ ] cleanup 在成功、失败、取消时都会执行。
 
 ## 18. 最终推荐
 
-当前参考实现已经补齐 composite action、配置 Schema、签名/Archive/导出/IPA 检查/ASC 脚本和 CI 自测；App 接入时应以 `examples/app-repository/` 草稿为起点，补齐真实工程值并固定中央 action 的完整提交 SHA。`ios-multi-app-cloud-build-system-additions/examples/` 只作为设计迁移参考。
+当前参考实现已经补齐 composite action、配置 Schema、签名/Archive/导出/IPA 检查、ASC 上传/轮询、商店版本准备、元数据同步、精确 build 绑定、Review Submission 和 CI 自测；App 接入时应以 `examples/app-repository/` 草稿为起点，补齐真实工程值并固定中央 action 的完整提交 SHA。`ios-multi-app-cloud-build-system-additions/examples/` 只作为设计迁移参考。
 
 生产环境采用以下组合：
 
@@ -1341,12 +1412,13 @@ app-a-appstore：只保存 P8              → 下载已校验 IPA 并上传 ASC
                                   ↓
 中央仓库：固定 SHA 的 composite action + 公共脚本
                                   ↓
-Archive → IPA 检查 → Artifact → ASC 上传 → TestFlight 状态确认
+Archive → IPA 检查 → Artifact → ASC 上传 → 处理状态确认
+        → App Store version/metadata/build → 可选 App Review 提交
 ```
 
 如果组织明确接受 Repository/Organization secrets，且更看重 caller 极简化，可以额外提供 reusable workflow 入口；但文档、代码和安全评审中必须保留 Environment secrets 不能直接传入 reusable workflow 的限制说明。
 
-系统的最终成功条件不应是“Actions 变绿”，而应是：指定源码 SHA 生成的指定 IPA 已保存，Apple 精确识别到相同 App、marketing version 和 build number，处理状态有效，并达到配置要求的 TestFlight 状态。
+系统的最终成功条件不应是“Actions 变绿”，而应按请求边界分别报告：指定源码 SHA 的 IPA 已保存；Apple 精确识别相同 App、marketing version 和 build number；处理状态有效；商店版本绑定精确 build；Review Submission 已进入可验证状态。审核通过、自动发布和商店可见仍是后续独立证据。
 
 ## 19. 官方参考资料
 
@@ -1377,3 +1449,7 @@ Archive → IPA 检查 → Artifact → ASC 上传 → TestFlight 状态确认
 - [A10] [BuildUploadState](https://developer.apple.com/documentation/appstoreconnectapi/builduploadstate)
 - [A11] [Build upload statuses](https://developer.apple.com/help/app-store-connect/reference/app-uploads/build-upload-statuses)
 - [A12] [List builds](https://developer.apple.com/documentation/appstoreconnectapi/get-v1-builds)
+- [A13] [Create an App Store version](https://developer.apple.com/documentation/appstoreconnectapi/post-v1-appstoreversions)
+- [A14] [Modify the build for an App Store version](https://developer.apple.com/documentation/appstoreconnectapi/patch-v1-appstoreversions-_id_-relationships-build)
+- [A15] [Review submissions](https://developer.apple.com/documentation/appstoreconnectapi/review-submissions)
+- [A16] [Review submission items](https://developer.apple.com/documentation/appstoreconnectapi/review-submission-items)
