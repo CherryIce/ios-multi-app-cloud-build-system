@@ -10,12 +10,14 @@ options = {}
 OptionParser.new do |parser|
   parser.on("--config PATH") { |value| options[:config] = value }
   parser.on("--profile-map PATH") { |value| options[:profile_map] = value }
+  parser.on("--identity SHA1") { |value| options[:identity] = value }
   parser.on("--output PATH") { |value| options[:output] = value }
 end.parse!
 
 begin
-  missing = %i[config profile_map output].reject { |key| options[key] && !options[key].empty? }
+  missing = %i[config profile_map identity output].reject { |key| options[key] && !options[key].empty? }
   abort "missing options: #{missing.join(', ')}" unless missing.empty?
+  abort "identity must be a SHA-1 fingerprint" unless options.fetch(:identity).match?(/\A[0-9A-Fa-f]{40}\z/)
 
   config = IOSBuild::Config.load_file(options.fetch(:config))
   profiles = JSON.parse(File.read(options.fetch(:profile_map)))
@@ -43,7 +45,7 @@ begin
       <key>teamID</key>
       <string>#{escape.call(IOSBuild::Config.dig(config, "app.team_id"))}</string>
       <key>signingCertificate</key>
-      <string>Apple Distribution</string>
+      <string>#{escape.call(options.fetch(:identity).upcase)}</string>
       <key>manageAppVersionAndBuildNumber</key>
       <false/>
       <key>provisioningProfiles</key>

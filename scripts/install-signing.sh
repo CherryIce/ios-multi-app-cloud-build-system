@@ -38,6 +38,7 @@ chmod 600 "$p12_path" "$profiles_archive"
 
 P12_PASSWORD="$IOS_DISTRIBUTION_P12_PASSWORD" \
   openssl pkcs12 \
+    -legacy \
     -in "$p12_path" \
     -passin env:P12_PASSWORD \
     -clcerts \
@@ -95,10 +96,13 @@ ruby -rjson -rfileutils -e '
   exit(ok ? 0 : 1)
 ' "$keychain_state" "$keychain_path"
 
-if ! security find-identity -v -p codesigning "$keychain_path" | grep -q 'Apple Distribution'; then
-  echo "No Apple Distribution identity was imported" >&2
-  exit 1
-fi
+security find-identity -v -p codesigning "$keychain_path" |
+  ruby "${IOS_BUILD_ACTION_PATH}/scripts/verify-code-signing-identity.rb" "$p12_certificate_path"
+code_sign_identity="$(ruby -ropenssl -e '
+  certificate = OpenSSL::X509::Certificate.new(File.binread(ARGV.fetch(0)))
+  print OpenSSL::Digest::SHA1.hexdigest(certificate.to_der).upcase
+' "$p12_certificate_path")"
+echo "IOS_CODE_SIGN_IDENTITY=$code_sign_identity" >> "$GITHUB_ENV"
 
 profiles_install_dir="${HOME}/Library/MobileDevice/Provisioning Profiles"
 mkdir -p "$profiles_install_dir"

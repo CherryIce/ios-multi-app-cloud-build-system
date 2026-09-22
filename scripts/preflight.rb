@@ -136,6 +136,7 @@ begin
     output.puts "submit_to_review=#{submit_to_review}"
     output.puts "source_sha=#{source_sha}"
     output.puts "build_number_strategy=#{IOSBuild::Config.dig(config, 'versioning.build_number_strategy')}"
+    output.puts "dependency_mode=#{IOSBuild::Config.dig(config, 'build.dependency_mode')}"
     output.puts "retention_days=#{IOSBuild::Config.dig(config, 'artifacts.retention_days')}"
   end
 

@@ -217,7 +217,7 @@ app-a/
 建议每个 App 保存 `.github/ios-build.yml`：
 
 ```yaml
-schema_version: 1
+schema_version: 2
 
 release:
   allowed_events:

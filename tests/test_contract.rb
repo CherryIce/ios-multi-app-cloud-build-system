@@ -65,6 +65,17 @@ class ContractTest < Minitest::Test
                  wait_step.fetch("env").fetch("IOS_RESOLVED_BUILD_NUMBER")
   end
 
+  def test_flutter_setup_is_conditionally_restored_for_monorepo_apps
+    action = YAML.load_file(ACTION_PATH)
+    flutter_step = action.fetch("runs").fetch("steps").find do |step|
+      step["name"] == "Install verified Flutter SDK"
+    end
+
+    refute_nil flutter_step
+    assert_equal "${{ steps.preflight.outputs.dependency_mode == 'flutter' }}", flutter_step["if"]
+    assert_includes flutter_step.fetch("run"), "install-flutter.sh"
+  end
+
   def test_app_repository_config_matches_runtime_contract
     config_path = File.join(ROOT, "examples/app-repository/.github/ios-build.yml")
     script_path = File.join(ROOT, "scripts/validate-config.rb")

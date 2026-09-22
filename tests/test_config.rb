@@ -30,7 +30,7 @@ class ConfigTest < Minitest::Test
     schema = JSON.parse(File.read(schema_path))
     assert_equal IOSBuild::Config::REQUIRED_TOP_LEVEL_KEYS.sort, schema.fetch("required").sort
     assert_equal IOSBuild::Config::TOP_LEVEL_KEYS.sort, schema.fetch("properties").keys.sort
-    assert_equal 1, schema.dig("properties", "schema_version", "const")
+    assert_equal IOSBuild::Config::SCHEMA_VERSION, schema.dig("properties", "schema_version", "const")
   end
 
   def test_app_store_section_is_backward_compatible_when_absent
@@ -39,6 +39,25 @@ class ConfigTest < Minitest::Test
 
     assert IOSBuild::Config.validate!(config)
     assert_equal false, IOSBuild::Config.optional_dig(config, "app_store.enabled", false)
+  end
+
+  def test_flutter_configuration_is_required_only_for_flutter_dependencies
+    config = IOSBuild::Config.load_file(VALID, validate: false)
+    config["build"]["dependency_mode"] = "flutter"
+
+    error = assert_raises(IOSBuild::ConfigError) { IOSBuild::Config.validate!(config) }
+    assert_includes error.message, "root.flutter is required"
+
+    config["flutter"] = {
+      "project_directory" => "apps/example",
+      "version" => "3.35.7",
+      "channel" => "stable",
+      "architecture" => "arm64",
+      "sdk_sha256" => "4d7aaadc4893f9216d4e2ecbe0e8fb4213e9bd49d29fd5f441f34fcc05758e2b"
+    }
+    config["build"]["container_path"] = "apps/example/ios/Runner.xcworkspace"
+
+    assert IOSBuild::Config.validate!(config)
   end
 
   def test_app_store_requires_processing_complete_wait_level
@@ -68,6 +87,7 @@ class ConfigTest < Minitest::Test
         "ruby", script,
         "--config", VALID,
         "--profile-map", profile_map,
+        "--identity", "A" * 40,
         "--output", output
       )
       assert status.success?, [stdout, stderr].join("\n")
@@ -75,6 +95,7 @@ class ConfigTest < Minitest::Test
       assert_includes plist, "<string>app-store-connect</string>"
       assert_includes plist, "<key>com.example.app.widget</key>"
       assert_includes plist, "<string>Example Widget App Store Profile</string>"
+      assert_includes plist, "<key>signingCertificate</key>\n  <string>#{'A' * 40}</string>"
     end
   end
 end

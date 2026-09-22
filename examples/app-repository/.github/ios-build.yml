@@ -1,5 +1,5 @@
 # APP REPOSITORY TEMPLATE: replace every Example value before use.
-schema_version: 1
+schema_version: 2
 
 release:
   allowed_events:

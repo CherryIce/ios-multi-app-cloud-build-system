@@ -119,9 +119,9 @@ runs:
         IOS_SUBMIT_TO_REVIEW: ${{ inputs.submit_to_review }}
       run: bash "$IOS_BUILD_ACTION_PATH/scripts/preflight.sh"
 
-    - name: Prepare ASC key for build number resolution
+    - name: Prepare ASC key for app and build resolution
       id: asc_key_for_number
-      if: ${{ steps.preflight.outputs.build_number_strategy == 'asc_increment' && inputs.build_number == '' }}
+      if: ${{ inputs.upload_to_asc == 'true' || (steps.preflight.outputs.build_number_strategy == 'asc_increment' && inputs.build_number == '') }}
       shell: bash
       env:
         IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
@@ -130,12 +130,27 @@ runs:
         ASC_ISSUER_ID: ${{ inputs.asc_issuer_id }}
       run: bash "$IOS_BUILD_ACTION_PATH/scripts/prepare-asc-key.sh"
 
+    - name: Resolve or verify App Store Connect app
+      id: resolve_app
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+      run: |
+        ruby "$IOS_BUILD_ACTION_PATH/scripts/resolve-asc-app.rb" \
+          --config "${{ steps.preflight.outputs.config_path }}" \
+          --upload-to-asc "${{ inputs.upload_to_asc }}" \
+          --key-id "${{ inputs.asc_key_id }}" \
+          --issuer-id "${{ inputs.asc_issuer_id }}" \
+          --key-path "${{ steps.asc_key_for_number.outputs.asc_key_path }}" \
+          --output "$IOS_BUILD_WORK_DIR/runtime-ios-build.yml" \
+          --github-output "$GITHUB_OUTPUT"
+
     - name: Resolve build number
       id: resolve
       shell: bash
       env:
         IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
-        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_CONFIG_PATH: ${{ steps.resolve_app.outputs.config_path }}
         IOS_MARKETING_VERSION: ${{ steps.preflight.outputs.marketing_version }}
         IOS_REQUESTED_BUILD_NUMBER: ${{ steps.preflight.outputs.requested_build_number }}
         ASC_KEY_PATH: ${{ steps.asc_key_for_number.outputs.asc_key_path }}
@@ -148,18 +163,26 @@ runs:
       shell: bash
       run: rm -f -- "${{ steps.asc_key_for_number.outputs.asc_key_path }}"
 
+    - name: Install verified Flutter SDK
+      if: ${{ steps.preflight.outputs.dependency_mode == 'flutter' }}
+      shell: bash
+      env:
+        IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
+        IOS_CONFIG_PATH: ${{ steps.resolve_app.outputs.config_path }}
+      run: bash "$IOS_BUILD_ACTION_PATH/scripts/install-flutter.sh"
+
     - name: Install locked project dependencies
       shell: bash
       env:
         IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
-        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_CONFIG_PATH: ${{ steps.resolve_app.outputs.config_path }}
       run: bash "$IOS_BUILD_ACTION_PATH/scripts/install-dependencies.sh"
 
     - name: Install temporary signing material
       shell: bash
       env:
         IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
-        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_CONFIG_PATH: ${{ steps.resolve_app.outputs.config_path }}
         IOS_DISTRIBUTION_P12_BASE64: ${{ inputs.ios_distribution_p12_base64 }}
         IOS_DISTRIBUTION_P12_PASSWORD: ${{ inputs.ios_distribution_p12_password }}
         IOS_PROFILES_ARCHIVE_BASE64: ${{ inputs.ios_profiles_archive_base64 }}
@@ -170,7 +193,7 @@ runs:
       shell: bash
       env:
         IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
-        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_CONFIG_PATH: ${{ steps.resolve_app.outputs.config_path }}
         IOS_MARKETING_VERSION: ${{ steps.preflight.outputs.marketing_version }}
       run: bash "$IOS_BUILD_ACTION_PATH/scripts/archive.sh"
 
@@ -179,14 +202,14 @@ runs:
       shell: bash
       env:
         IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
-        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_CONFIG_PATH: ${{ steps.resolve_app.outputs.config_path }}
       run: bash "$IOS_BUILD_ACTION_PATH/scripts/export.sh"
 
     - name: Inspect exported IPA
       shell: bash
       env:
         IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
-        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_CONFIG_PATH: ${{ steps.resolve_app.outputs.config_path }}
         IOS_MARKETING_VERSION: ${{ steps.preflight.outputs.marketing_version }}
       run: bash "$IOS_BUILD_ACTION_PATH/scripts/inspect-ipa.sh"
 
@@ -195,7 +218,7 @@ runs:
       shell: bash
       env:
         IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
-        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path || inputs.config_path }}
+        IOS_CONFIG_PATH: ${{ steps.resolve_app.outputs.config_path || steps.preflight.outputs.config_path || inputs.config_path }}
       run: bash "$IOS_BUILD_ACTION_PATH/scripts/collect-artifacts.sh"
 
     - name: Retain IPA and build evidence before Apple upload
@@ -225,7 +248,7 @@ runs:
       shell: bash
       env:
         IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
-        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_CONFIG_PATH: ${{ steps.resolve_app.outputs.config_path }}
         IOS_MARKETING_VERSION: ${{ steps.preflight.outputs.marketing_version }}
         ASC_KEY_PATH: ${{ steps.asc_key_for_upload.outputs.asc_key_path }}
         ASC_KEY_ID: ${{ inputs.asc_key_id }}
@@ -238,7 +261,7 @@ runs:
       shell: bash
       env:
         IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
-        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_CONFIG_PATH: ${{ steps.resolve_app.outputs.config_path }}
         IOS_MARKETING_VERSION: ${{ steps.preflight.outputs.marketing_version }}
         ASC_KEY_PATH: ${{ steps.asc_key_for_upload.outputs.asc_key_path }}
         ASC_KEY_ID: ${{ inputs.asc_key_id }}
@@ -263,7 +286,7 @@ runs:
       shell: bash
       env:
         IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
-        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_CONFIG_PATH: ${{ steps.resolve_app.outputs.config_path }}
         IOS_MARKETING_VERSION: ${{ steps.preflight.outputs.marketing_version }}
         IOS_RESOLVED_BUILD_NUMBER: ${{ steps.resolve.outputs.build_number }}
         ASC_KEY_PATH: ${{ steps.asc_key_for_upload.outputs.asc_key_path }}
@@ -277,7 +300,7 @@ runs:
       shell: bash
       env:
         IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
-        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path }}
+        IOS_CONFIG_PATH: ${{ steps.resolve_app.outputs.config_path }}
         IOS_MARKETING_VERSION: ${{ steps.preflight.outputs.marketing_version }}
         ASC_KEY_PATH: ${{ steps.asc_key_for_upload.outputs.asc_key_path }}
         ASC_KEY_ID: ${{ inputs.asc_key_id }}
@@ -302,7 +325,7 @@ runs:
       shell: bash
       env:
         IOS_BUILD_ACTION_PATH: ${{ github.action_path }}/../../..
-        IOS_CONFIG_PATH: ${{ steps.preflight.outputs.config_path || inputs.config_path }}
+        IOS_CONFIG_PATH: ${{ steps.resolve_app.outputs.config_path || steps.preflight.outputs.config_path || inputs.config_path }}
       run: bash "$IOS_BUILD_ACTION_PATH/scripts/collect-artifacts.sh"
 
     - name: Retain upload status and diagnostics
