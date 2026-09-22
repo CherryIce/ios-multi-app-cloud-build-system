@@ -79,6 +79,34 @@ module IOSBuild
         request(:patch, path, payload: payload)
       end
 
+      def delete(path)
+        request(:delete, path)
+      end
+
+      def upload_part(url, method:, headers:, body:)
+        uri = URI(url)
+        raise APIError, "ASC upload operation must use HTTPS" unless uri.scheme == "https" && uri.host
+        raise APIError, "unsupported ASC upload operation method: #{method}" unless method == "PUT"
+
+        request = Net::HTTP::Put.new(uri)
+        headers.each { |name, value| request[name] = value }
+        request.body = body
+        response = Net::HTTP.start(
+          uri.host,
+          uri.port,
+          use_ssl: true,
+          open_timeout: 20,
+          read_timeout: 120
+        ) { |http| http.request(request) }
+        return if response.is_a?(Net::HTTPSuccess)
+
+        raise APIError.new(
+          "ASC asset upload returned HTTP #{response.code}",
+          status: response.code.to_i,
+          body: response.body
+        )
+      end
+
       def request(method, path, query: nil, payload: nil)
         uri = if path.start_with?("http://", "https://")
                 URI(path)
@@ -94,6 +122,8 @@ module IOSBuild
                     Net::HTTP::Post.new(uri)
                   when :patch
                     Net::HTTP::Patch.new(uri)
+                  when :delete
+                    Net::HTTP::Delete.new(uri)
                   else
                     raise ArgumentError, "unsupported HTTP method: #{method}"
                   end

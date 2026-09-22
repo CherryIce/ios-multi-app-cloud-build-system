@@ -23,6 +23,16 @@ on:
         required: true
         default: false
         type: boolean
+      update_asc_text_metadata:
+        description: Update only text fields declared in app-store-metadata.yml
+        required: true
+        default: false
+        type: boolean
+      replace_asc_media:
+        description: Replace only screenshot/preview collections declared in app-store-metadata.yml
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -52,6 +62,8 @@ jobs:
           build_number: ${{ inputs.build_number }}
           upload_to_asc: ${{ inputs.upload_to_asc }}
           submit_to_review: ${{ inputs.submit_to_review }}
+          update_asc_text_metadata: ${{ inputs.update_asc_text_metadata }}
+          replace_asc_media: ${{ inputs.replace_asc_media }}
           ios_distribution_p12_base64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
           ios_distribution_p12_password: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
           ios_profiles_archive_base64: ${{ secrets.IOS_PROFILES_ARCHIVE_BASE64 }}

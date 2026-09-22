@@ -19,6 +19,8 @@ OptionParser.new do |parser|
   parser.on("--issuer-id ID") { |value| options[:issuer_id] = value }
   parser.on("--key-path PATH") { |value| options[:key_path] = value }
   parser.on("--submit-to-review BOOLEAN") { |value| options[:submit_to_review] = value }
+  parser.on("--update-text-metadata BOOLEAN") { |value| options[:update_text_metadata] = value }
+  parser.on("--replace-media BOOLEAN") { |value| options[:replace_media] = value }
   parser.on("--output PATH") { |value| options[:output] = value }
   parser.on("--github-output PATH") { |value| options[:github_output] = value }
 end.parse!
@@ -45,12 +47,19 @@ end
 
 begin
   required = %i[
-    config phase marketing_version key_id issuer_id key_path submit_to_review output github_output
+    config phase marketing_version key_id issuer_id key_path submit_to_review
+    update_text_metadata replace_media output github_output
   ]
   missing = required.reject { |key| options[key] && !options[key].to_s.empty? }
   abort "missing options: #{missing.join(', ')}" unless missing.empty?
   unless %w[true false].include?(options.fetch(:submit_to_review))
     abort "submit-to-review must be true or false"
+  end
+  unless %w[true false].include?(options.fetch(:update_text_metadata))
+    abort "update-text-metadata must be true or false"
+  end
+  unless %w[true false].include?(options.fetch(:replace_media))
+    abort "replace-media must be true or false"
   end
   unless %w[prepare finalize].include?(options.fetch(:phase))
     abort "phase must be prepare or finalize"
@@ -84,6 +93,11 @@ begin
     "app_store.metadata_path"
   )
   metadata = IOSBuild::ASC::AppStoreMetadata.load_file(metadata_path)
+  IOSBuild::ASC::AppStoreMetadata.validate_requested_changes!(
+    metadata,
+    update_text_metadata: options.fetch(:update_text_metadata) == "true",
+    replace_media: options.fetch(:replace_media) == "true"
+  )
   client = IOSBuild::ASC::Client.new(
     key_id: options.fetch(:key_id),
     issuer_id: options.fetch(:issuer_id),
@@ -98,6 +112,9 @@ begin
     metadata: metadata,
     automatic_release: IOSBuild::Config.dig(config, "app_store.automatic_release"),
     submit_to_review: options.fetch(:submit_to_review) == "true",
+    update_text_metadata: options.fetch(:update_text_metadata) == "true",
+    replace_media: options.fetch(:replace_media) == "true",
+    workspace: workspace,
     demo_account_name: ENV.fetch("ASC_REVIEW_DEMO_ACCOUNT_NAME", ""),
     demo_account_password: ENV.fetch("ASC_REVIEW_DEMO_ACCOUNT_PASSWORD", "")
   )
@@ -117,6 +134,8 @@ begin
     output.puts "app_store_no_op_reason=#{summary['no_op_reason']}"
     output.puts "app_store_already_submitted=#{summary['already_submitted']}"
     output.puts "app_store_already_released=#{summary['already_released']}"
+    output.puts "asc_text_metadata_updated=#{summary['text_metadata_updated']}"
+    output.puts "asc_media_replaced=#{summary['media_replaced']}"
   end
 
   puts [

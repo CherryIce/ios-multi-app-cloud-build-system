@@ -6,6 +6,8 @@ set -euo pipefail
 : "${IOS_MARKETING_VERSION:?IOS_MARKETING_VERSION is required}"
 : "${IOS_UPLOAD_TO_ASC:?IOS_UPLOAD_TO_ASC is required}"
 : "${IOS_SUBMIT_TO_REVIEW:?IOS_SUBMIT_TO_REVIEW is required}"
+: "${IOS_UPDATE_ASC_TEXT_METADATA:?IOS_UPDATE_ASC_TEXT_METADATA is required}"
+: "${IOS_REPLACE_ASC_MEDIA:?IOS_REPLACE_ASC_MEDIA is required}"
 : "${IOS_BUILD_OUTPUT_DIR:?IOS_BUILD_OUTPUT_DIR is required}"
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
 
@@ -28,6 +30,8 @@ ruby "${IOS_BUILD_ACTION_PATH}/scripts/preflight.rb" \
   --build-number "${IOS_BUILD_NUMBER:-}" \
   --upload-to-asc "$IOS_UPLOAD_TO_ASC" \
   --submit-to-review "$IOS_SUBMIT_TO_REVIEW" \
+  --update-text-metadata "$IOS_UPDATE_ASC_TEXT_METADATA" \
+  --replace-media "$IOS_REPLACE_ASC_MEDIA" \
   --metadata "${IOS_BUILD_OUTPUT_DIR}/build-metadata.json" \
   --github-output "$GITHUB_OUTPUT"
 

@@ -4,6 +4,14 @@ copyright: "2026 Example Company"
 uses_idfa: false
 uses_non_exempt_encryption: false
 
+app_info_localizations:
+  en-US:
+    name: "Example App"
+    subtitle: "A focused example"
+  zh-Hans:
+    name: "示例应用"
+    subtitle: "专注而简单"
+
 localizations:
   en-US:
     whats_new: "Performance improvements and bug fixes."
@@ -27,3 +35,16 @@ review_detail:
   contact_phone: "+1 555 0100"
   demo_account_required: false
   notes: "No sign-in is required for this version."
+
+# Media replacement is opt-in. Uncomment only the locale/display-type
+# collections that should be replaced, commit the referenced files, and run
+# with replace_asc_media=true. Collections omitted here remain unchanged.
+# media:
+#   en-US:
+#     screenshots:
+#       APP_IPHONE_67:
+#         - app-store/media/en-US/iphone-67/01.png
+#         - app-store/media/en-US/iphone-67/02.png
+#     previews:
+#       IPHONE_65:
+#         - app-store/media/en-US/iphone-65/01.mov

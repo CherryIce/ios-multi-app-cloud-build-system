@@ -16,6 +16,8 @@ OptionParser.new do |parser|
   parser.on("--build-number NUMBER") { |value| options[:build_number] = value }
   parser.on("--upload-to-asc BOOLEAN") { |value| options[:upload_to_asc] = value }
   parser.on("--submit-to-review BOOLEAN") { |value| options[:submit_to_review] = value }
+  parser.on("--update-text-metadata BOOLEAN") { |value| options[:update_text_metadata] = value }
+  parser.on("--replace-media BOOLEAN") { |value| options[:replace_media] = value }
   parser.on("--metadata PATH") { |value| options[:metadata] = value }
   parser.on("--github-output PATH") { |value| options[:github_output] = value }
 end.parse!
@@ -26,7 +28,10 @@ def fail_with(message)
 end
 
 begin
-  required_options = %i[config marketing_version upload_to_asc submit_to_review metadata github_output]
+  required_options = %i[
+    config marketing_version upload_to_asc submit_to_review update_text_metadata
+    replace_media metadata github_output
+  ]
   missing = required_options.reject { |key| options.key?(key) && !options[key].to_s.empty? }
   abort "missing options: #{missing.join(', ')}" unless missing.empty?
 
@@ -79,6 +84,10 @@ begin
   fail_with("upload_to_asc must be true or false") unless %w[true false].include?(upload_to_asc)
   submit_to_review = options.fetch(:submit_to_review)
   fail_with("submit_to_review must be true or false") unless %w[true false].include?(submit_to_review)
+  update_text_metadata = options.fetch(:update_text_metadata)
+  fail_with("update_text_metadata must be true or false") unless %w[true false].include?(update_text_metadata)
+  replace_media = options.fetch(:replace_media)
+  fail_with("replace_media must be true or false") unless %w[true false].include?(replace_media)
 
   app_store_enabled = IOSBuild::Config.optional_dig(config, "app_store.enabled", false)
   if submit_to_review == "true" && upload_to_asc != "true"
@@ -87,6 +96,12 @@ begin
   if submit_to_review == "true" && !app_store_enabled
     fail_with("submit_to_review requires app_store.enabled=true")
   end
+  if (update_text_metadata == "true" || replace_media == "true") && upload_to_asc != "true"
+    fail_with("ASC metadata changes require upload_to_asc=true")
+  end
+  if (update_text_metadata == "true" || replace_media == "true") && !app_store_enabled
+    fail_with("ASC metadata changes require app_store.enabled=true")
+  end
   if app_store_enabled
     metadata_path = IOSBuild::Config.dig(config, "app_store.metadata_path")
     metadata_candidate = File.expand_path(metadata_path, workspace_real)
@@ -94,7 +109,22 @@ begin
     unless metadata_real.start_with?(workspace_real + File::SEPARATOR)
       fail_with("App Store metadata path must remain inside GITHUB_WORKSPACE")
     end
-    IOSBuild::ASC::AppStoreMetadata.load_file(metadata_real)
+    app_store_metadata = IOSBuild::ASC::AppStoreMetadata.load_file(metadata_real)
+    IOSBuild::ASC::AppStoreMetadata.validate_requested_changes!(
+      app_store_metadata,
+      update_text_metadata: update_text_metadata == "true",
+      replace_media: replace_media == "true"
+    )
+    if replace_media == "true"
+      IOSBuild::ASC::AppStoreMetadata.media_files(app_store_metadata).each do |relative_path|
+        media_real = File.realpath(File.expand_path(relative_path, workspace_real))
+        unless media_real.start_with?(workspace_real + File::SEPARATOR) && File.file?(media_real)
+          fail_with("ASC media path must resolve to a file inside GITHUB_WORKSPACE: #{relative_path}")
+        end
+      rescue Errno::ENOENT, Errno::EACCES
+        fail_with("ASC media file is unavailable: #{relative_path}")
+      end
+    end
   end
 
   container_path = IOSBuild::Config.dig(config, "build.container_path")
@@ -121,6 +151,8 @@ begin
     "upload_to_asc" => upload_to_asc == "true",
     "app_store_enabled" => app_store_enabled,
     "submit_to_review" => submit_to_review == "true",
+    "update_asc_text_metadata" => update_text_metadata == "true",
+    "replace_asc_media" => replace_media == "true",
     "created_at" => Time.now.utc.iso8601
   }
 
@@ -134,6 +166,8 @@ begin
     output.puts "upload_to_asc=#{upload_to_asc}"
     output.puts "app_store_enabled=#{app_store_enabled}"
     output.puts "submit_to_review=#{submit_to_review}"
+    output.puts "update_asc_text_metadata=#{update_text_metadata}"
+    output.puts "replace_asc_media=#{replace_media}"
     output.puts "source_sha=#{source_sha}"
     output.puts "build_number_strategy=#{IOSBuild::Config.dig(config, 'versioning.build_number_strategy')}"
     output.puts "dependency_mode=#{IOSBuild::Config.dig(config, 'build.dependency_mode')}"

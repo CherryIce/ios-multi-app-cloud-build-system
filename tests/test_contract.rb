@@ -67,7 +67,11 @@ class ContractTest < Minitest::Test
 
   def test_action_exposes_idempotent_app_store_results
     action = YAML.load_file(ACTION_PATH)
+    inputs = action.fetch("inputs")
     outputs = action.fetch("outputs")
+
+    assert_equal "false", inputs.fetch("update_asc_text_metadata").fetch("default")
+    assert_equal "false", inputs.fetch("replace_asc_media").fetch("default")
 
     assert_equal "${{ steps.app_store.outputs.app_store_no_op }}",
                  outputs.fetch("app_store_no_op").fetch("value")
@@ -77,6 +81,10 @@ class ContractTest < Minitest::Test
                  outputs.fetch("app_store_already_submitted").fetch("value")
     assert_equal "${{ steps.app_store.outputs.app_store_already_released }}",
                  outputs.fetch("app_store_already_released").fetch("value")
+    assert_equal "${{ steps.app_store.outputs.asc_text_metadata_updated }}",
+                 outputs.fetch("asc_text_metadata_updated").fetch("value")
+    assert_equal "${{ steps.app_store.outputs.asc_media_replaced }}",
+                 outputs.fetch("asc_media_replaced").fetch("value")
   end
 
   def test_flutter_setup_is_conditionally_restored_for_monorepo_apps

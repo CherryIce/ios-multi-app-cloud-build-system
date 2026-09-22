@@ -20,6 +20,14 @@ inputs:
     description: Whether to submit the prepared App Store version to App Review after processing.
     required: false
     default: "false"
+  update_asc_text_metadata:
+    description: Whether to patch only the App Store text metadata fields declared in the metadata manifest.
+    required: false
+    default: "false"
+  replace_asc_media:
+    description: Whether to replace only the screenshot and app preview collections declared in the metadata manifest.
+    required: false
+    default: "false"
   ios_distribution_p12_base64:
     description: Base64-encoded Apple Distribution certificate and private key.
     required: true
@@ -108,6 +116,12 @@ outputs:
   app_store_already_released:
     description: Whether the requested App Store version was already released.
     value: ${{ steps.app_store.outputs.app_store_already_released }}
+  asc_text_metadata_updated:
+    description: Whether declared App Store text metadata was updated and verified.
+    value: ${{ steps.app_store.outputs.asc_text_metadata_updated }}
+  asc_media_replaced:
+    description: Whether declared App Store screenshot or app preview collections were replaced and verified.
+    value: ${{ steps.app_store.outputs.asc_media_replaced }}
 
 runs:
   using: composite
@@ -129,6 +143,8 @@ runs:
         IOS_BUILD_NUMBER: ${{ inputs.build_number }}
         IOS_UPLOAD_TO_ASC: ${{ inputs.upload_to_asc }}
         IOS_SUBMIT_TO_REVIEW: ${{ inputs.submit_to_review }}
+        IOS_UPDATE_ASC_TEXT_METADATA: ${{ inputs.update_asc_text_metadata }}
+        IOS_REPLACE_ASC_MEDIA: ${{ inputs.replace_asc_media }}
       run: bash "$IOS_BUILD_ACTION_PATH/scripts/preflight.sh"
 
     - name: Prepare ASC key for app and build resolution
@@ -289,6 +305,8 @@ runs:
           --issuer-id "$ASC_ISSUER_ID" \
           --key-path "$ASC_KEY_PATH" \
           --submit-to-review false \
+          --update-text-metadata "${{ inputs.update_asc_text_metadata }}" \
+          --replace-media "${{ inputs.replace_asc_media }}" \
           --output "$IOS_BUILD_OUTPUT_DIR/app-store-status.json" \
           --github-output "$GITHUB_OUTPUT"
 
@@ -329,6 +347,8 @@ runs:
           --issuer-id "$ASC_ISSUER_ID" \
           --key-path "$ASC_KEY_PATH" \
           --submit-to-review "${{ inputs.submit_to_review }}" \
+          --update-text-metadata "${{ inputs.update_asc_text_metadata }}" \
+          --replace-media "${{ inputs.replace_asc_media }}" \
           --output "$IOS_BUILD_OUTPUT_DIR/app-store-status.json" \
           --github-output "$GITHUB_OUTPUT"
 

@@ -60,8 +60,9 @@ ios-multi-app-cloud-build-system-additions/ Fastlane/Bitrise 草稿
    - `ASC_REVIEW_DEMO_ACCOUNT_NAME`、`ASC_REVIEW_DEMO_ACCOUNT_PASSWORD`（仅 App Review 需要登录时）
 5. 把模板中的 `<PINNED_FULL_COMMIT_SHA>` 替换为经过审核的本仓库完整 commit SHA；不要使用 `main` 或可移动 Tag。
 6. 先执行 `upload_to_asc=false`，只验证签名、Archive、Export、IPA 检查和 Artifact。
-7. 再执行 `upload_to_asc=true`、`submit_to_review=false`，验证 Apple 处理完成、商店版本创建/复用、元数据同步和精确 build 绑定。
-8. 最后显式执行 `submit_to_review=true`；`app_store.automatic_release=true` 时，审核通过后的发布由 App Store Connect 负责。
+7. 再执行 `upload_to_asc=true`、`submit_to_review=false`，验证 Apple 处理完成、商店版本创建/复用和精确 build 绑定；文本、截图和预览仍默认不修改。
+8. 需要修改文本时，先在 metadata YAML 中只声明要改的字段，再显式执行 `update_asc_text_metadata=true`；需要替换媒体时，只声明要替换的 locale/display type 集合并执行 `replace_asc_media=true`。
+9. 最后显式执行 `submit_to_review=true`；`app_store.automatic_release=true` 时，审核通过后的发布由 App Store Connect 负责。
 
 ## 商店版本与提审
 
@@ -69,13 +70,14 @@ ios-multi-app-cloud-build-system-additions/ Fastlane/Bitrise 草稿
 
 1. 按 App、平台和 marketing version 创建或复用唯一 App Store version。
 2. 拒绝创建不高于当前已发布版本的版本号。
-3. 同步配置文件中的本地化文本和可选 App Review 联系信息。
-4. 确认精确 ASC build 为 `VALID`，处理可选出口合规声明，并绑定该 build。
-5. 仅在 `submit_to_review=true` 时创建或复用 Review Submission、加入版本并提交。
-6. 同版本仍可编辑（包括 `READY_FOR_REVIEW`）时，复用该版本、绑定本次处理完成的 build，并按开关继续提审。
-7. 同版本已经提审或已经发布时，App Store 阶段以成功 no-op 结束，不重复建版本、不替换已提交版本的 build，也不重复提审；结果通过 `app_store_no_op` 和 `app_store_no_op_reason` 输出。
+3. 仅在 `update_asc_text_metadata=true` 时，同步配置文件中明确声明的 App 信息、版本本地化文本和可选 App Review 联系信息，并回读核验；未声明字段和 locale 保持不变。
+4. 仅在 `replace_asc_media=true` 时，替换配置文件中明确声明的截图/App Preview locale + display type 集合；未声明集合保持不变。每个文件都完成预留、分片上传、MD5 提交、处理状态轮询、排序和回读核验。
+5. 确认精确 ASC build 为 `VALID`，处理可选出口合规声明，并绑定该 build。
+6. 仅在 `submit_to_review=true` 时创建或复用 Review Submission、加入版本并提交。
+7. 同版本仍可编辑（包括 `READY_FOR_REVIEW`）时，复用该版本、绑定本次处理完成的 build，并按开关继续提审。
+8. 同版本已经提审或已经发布时，且没有请求元数据/媒体变更，App Store 阶段以成功 no-op 结束；若明确请求了已不可编辑的变更，则失败并说明状态，不会静默跳过。
 
-版本更新说明 `whats_new` 必须为每个配置的 locale 提供。截图和 App Preview 继续使用 ASC 从已发布版本复制的资源；当前实现不上传新的媒体资源。若 ASC 缺少其他必填字段，提审 API 会失败并保留 `app-store-status.json` 诊断。`automatic_release` 只设置审核后的发布策略，不代表 Apple 已审核通过，也不代表 App 已经在商店可见。
+metadata YAML 是补丁清单：`name`、`subtitle`、`description`、`whats_new`、`keywords` 等字段都可按 locale 选择性声明；没有声明就不会覆盖。媒体替换对明确声明的集合是破坏性操作，脚本会先完成本地文件预检，再删除该集合的旧资源并上传新资源；因此必须使用受保护 Environment 审批。若 ASC 缺少其他必填字段，提审 API 会失败并保留 `app-store-status.json` 诊断。`automatic_release` 只设置审核后的发布策略，不代表 Apple 已审核通过，也不代表 App 已经在商店可见。
 
 ## 安全边界
 

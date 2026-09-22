@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "minitest/autorun"
+require "tmpdir"
 require_relative "../scripts/lib/app_store_metadata"
 require_relative "../scripts/lib/app_store_release"
 
@@ -26,6 +27,14 @@ class ScriptedASCClient
 
   def patch(path, payload)
     take(:patch, path, payload)
+  end
+
+  def delete(path)
+    take(:delete, path, nil)
+  end
+
+  def upload_part(url, method:, headers:, body:)
+    take(:upload_part, url, { method: method, headers: headers, body: body })
   end
 
   def paginate(path, query = nil, max_pages: 20)
@@ -101,7 +110,7 @@ class AppStoreReleaseTest < Minitest::Test
     refute client.calls.any? { |_method, path, _| path.include?("reviewSubmissions") }
   end
 
-  def test_prepare_phase_creates_the_store_version_before_build_processing
+  def test_prepare_phase_creates_the_store_version_without_changing_metadata_by_default
     client = ScriptedASCClient.new
     versions_path = "/v1/apps/#{APP_ID}/appStoreVersions"
     client.enqueue(:paginate, versions_path, [])
@@ -123,8 +132,11 @@ class AppStoreReleaseTest < Minitest::Test
     summary = release.prepare
 
     assert_equal true, summary["version_created"]
-    assert_equal true, summary["metadata_synced"]
+    assert_equal false, summary["metadata_synced"]
+    assert_equal false, summary["text_metadata_updated"]
+    assert_equal false, summary["media_replaced"]
     refute client.calls.any? { |_method, path, _| path.start_with?("/v1/builds/") }
+    refute client.calls.any? { |_method, path, _| path.include?("Localizations") }
   end
 
   def test_prepare_phase_is_a_no_op_for_an_already_submitted_version
@@ -339,18 +351,140 @@ class AppStoreReleaseTest < Minitest::Test
     assert_equal "AFTER_APPROVAL", release_update.last.dig("data", "attributes", "releaseType")
   end
 
+  def test_metadata_can_declare_only_the_fields_that_should_change
+    metadata = {
+      "uses_non_exempt_encryption" => false,
+      "app_info_localizations" => {
+        "en-US" => { "subtitle" => "A new subtitle" }
+      },
+      "localizations" => {
+        "en-US" => { "description" => "Only this description changes" }
+      }
+    }
+
+    assert IOSBuild::ASC::AppStoreMetadata.validate!(metadata)
+    assert_equal({ "subtitle" => "A new subtitle" },
+                 IOSBuild::ASC::AppStoreMetadata.app_info_localization_attributes(
+                   metadata.fetch("app_info_localizations").fetch("en-US")
+                 ))
+    assert_equal({ "description" => "Only this description changes" },
+                 IOSBuild::ASC::AppStoreMetadata.localization_attributes(
+                   metadata.fetch("localizations").fetch("en-US")
+                 ))
+  end
+
+  def test_metadata_reports_non_mapping_localizations_as_a_validation_error
+    error = assert_raises(IOSBuild::ASC::MetadataError) do
+      IOSBuild::ASC::AppStoreMetadata.validate!(
+        "app_info_localizations" => "invalid",
+        "localizations" => "invalid"
+      )
+    end
+
+    assert_includes error.message, "app_info_localizations must be a non-empty mapping"
+    assert_includes error.message, "localizations must be a non-empty mapping"
+  end
+
+  def test_text_switch_updates_and_verifies_only_declared_fields
+    metadata = {
+      "uses_non_exempt_encryption" => false,
+      "app_info_localizations" => {
+        "en-US" => { "name" => "New Name", "subtitle" => "New Subtitle" }
+      },
+      "localizations" => {
+        "en-US" => { "description" => "New Description", "keywords" => "one,two" }
+      }
+    }
+    client = ScriptedASCClient.new
+    versions_path = "/v1/apps/#{APP_ID}/appStoreVersions"
+    version_localizations_path = "/v1/appStoreVersions/#{VERSION_ID}/appStoreVersionLocalizations"
+    client.enqueue(:paginate, versions_path, [editable_version("AFTER_APPROVAL")])
+    client.enqueue(
+      :paginate,
+      "/v1/apps/#{APP_ID}/appInfos",
+      [{ "type" => "appInfos", "id" => "app-info-1", "attributes" => { "state" => "PREPARE_FOR_SUBMISSION" } }]
+    )
+    client.enqueue(
+      :paginate,
+      "/v1/appInfos/app-info-1/appInfoLocalizations",
+      [{ "type" => "appInfoLocalizations", "id" => "app-info-en", "attributes" => { "locale" => "en-US" } }]
+    )
+    client.enqueue(:patch, "/v1/appInfoLocalizations/app-info-en", {})
+    client.enqueue(
+      :get,
+      "/v1/appInfoLocalizations/app-info-en",
+      { "data" => { "attributes" => { "locale" => "en-US", "name" => "New Name", "subtitle" => "New Subtitle" } } }
+    )
+    client.enqueue(:paginate, version_localizations_path, [localization("en-US", "loc-en")])
+    client.enqueue(:patch, "/v1/appStoreVersionLocalizations/loc-en", {})
+    client.enqueue(
+      :get,
+      "/v1/appStoreVersionLocalizations/loc-en",
+      { "data" => { "attributes" => { "locale" => "en-US", "description" => "New Description", "keywords" => "one,two" } } }
+    )
+
+    summary = release(client, submit: false, metadata: metadata, update_text: true).prepare
+
+    assert_equal true, summary["text_metadata_updated"]
+    app_info_patch = client.calls.find { |method, path, _| method == :patch && path.include?("appInfoLocalizations") }
+    version_patch = client.calls.find { |method, path, _| method == :patch && path.include?("appStoreVersionLocalizations") }
+    assert_equal({ "name" => "New Name", "subtitle" => "New Subtitle" },
+                 app_info_patch.last.dig("data", "attributes"))
+    assert_equal({ "description" => "New Description", "keywords" => "one,two" },
+                 version_patch.last.dig("data", "attributes"))
+  end
+
+  def test_prepare_rejects_explicit_changes_for_an_already_submitted_version
+    client = ScriptedASCClient.new
+    submitted_version = editable_version("AFTER_APPROVAL")
+    submitted_version["attributes"]["appVersionState"] = "WAITING_FOR_REVIEW"
+    client.enqueue(:paginate, "/v1/apps/#{APP_ID}/appStoreVersions", [submitted_version])
+
+    error = assert_raises(IOSBuild::ASC::ReleaseError) do
+      release(client, submit: true, update_text: true).prepare
+    end
+
+    assert_includes error.message, "cannot be applied"
+    assert_equal 1, client.calls.length
+  end
+
+  def test_media_replacement_rejects_ready_for_review_before_any_mutation
+    metadata = {
+      "uses_non_exempt_encryption" => false,
+      "media" => {
+        "en-US" => {
+          "screenshots" => { "APP_IPHONE_67" => ["shot.png"] }
+        }
+      }
+    }
+    client = ScriptedASCClient.new
+    draft = editable_version("MANUAL")
+    draft["attributes"]["appVersionState"] = "READY_FOR_REVIEW"
+    client.enqueue(:paginate, "/v1/apps/#{APP_ID}/appStoreVersions", [draft])
+
+    error = assert_raises(IOSBuild::ASC::ReleaseError) do
+      release(client, submit: false, metadata: metadata, replace_media: true).prepare
+    end
+
+    assert_includes error.message, "media cannot be replaced"
+    refute client.calls.any? { |method, _path, _| %i[post patch delete upload_part].include?(method) }
+  end
+
   private
 
-  def release(client, submit:)
+  def release(client, submit:, metadata: @metadata, update_text: false, replace_media: false, workspace: ROOT)
     IOSBuild::ASC::AppStoreRelease.new(
       client: client,
       app_id: APP_ID,
       marketing_version: VERSION,
       build_id: BUILD_ID,
       build_number: BUILD_NUMBER,
-      metadata: @metadata,
+      metadata: metadata,
       automatic_release: true,
-      submit_to_review: submit
+      submit_to_review: submit,
+      update_text_metadata: update_text,
+      replace_media: replace_media,
+      workspace: workspace
     )
   end
 
@@ -417,5 +551,76 @@ class AppStoreReleaseTest < Minitest::Test
       "id" => "submission-1",
       "attributes" => { "platform" => "IOS", "state" => state }
     }
+  end
+end
+
+
+class AppStoreMediaTest < Minitest::Test
+  def test_replaces_only_the_declared_screenshot_collection_and_verifies_order
+    Dir.mktmpdir("asc-media") do |workspace|
+      screenshot = File.join(workspace, "shot.png")
+      File.binwrite(screenshot, "PNG!")
+      manifest = {
+        "en-US" => {
+          "screenshots" => { "APP_IPHONE_67" => ["shot.png"] }
+        }
+      }
+      localizations = {
+        "en-US" => { "type" => "appStoreVersionLocalizations", "id" => "loc-en" }
+      }
+      client = ScriptedASCClient.new
+      sets_path = "/v1/appStoreVersionLocalizations/loc-en/appScreenshotSets"
+      assets_path = "/v1/appScreenshotSets/set-1/appScreenshots"
+      relationship_path = "/v1/appScreenshotSets/set-1/relationships/appScreenshots"
+      upload_url = "https://upload.example.test/part"
+      client.enqueue(
+        :paginate,
+        sets_path,
+        [{ "type" => "appScreenshotSets", "id" => "set-1", "attributes" => { "screenshotDisplayType" => "APP_IPHONE_67" } }]
+      )
+      client.enqueue(:paginate, assets_path, [{ "type" => "appScreenshots", "id" => "old-1" }])
+      client.enqueue(:delete, "/v1/appScreenshots/old-1", {})
+      client.enqueue(
+        :post,
+        "/v1/appScreenshots",
+        {
+          "data" => {
+            "type" => "appScreenshots",
+            "id" => "new-1",
+            "attributes" => {
+              "uploadOperations" => [{
+                "method" => "PUT",
+                "url" => upload_url,
+                "offset" => 0,
+                "length" => 4,
+                "requestHeaders" => [{ "name" => "Content-Type", "value" => "image/png" }]
+              }]
+            }
+          }
+        }
+      )
+      client.enqueue(:upload_part, upload_url, nil)
+      client.enqueue(:patch, "/v1/appScreenshots/new-1", {})
+      client.enqueue(
+        :get,
+        "/v1/appScreenshots/new-1",
+        { "data" => { "type" => "appScreenshots", "id" => "new-1", "attributes" => { "assetDeliveryState" => { "state" => "COMPLETE" } } } }
+      )
+      client.enqueue(:patch, relationship_path, {})
+      client.enqueue(:get, relationship_path, { "data" => [{ "type" => "appScreenshots", "id" => "new-1" }] })
+
+      summary = IOSBuild::ASC::AppStoreMedia.new(
+        client: client,
+        workspace: workspace,
+        poll_interval_seconds: 0
+      ).replace!(manifest, localizations)
+
+      assert_equal({ "screenshots" => 1, "previews" => 0, "collections" => 1 }, summary)
+      upload = client.calls.find { |method, path, _| method == :upload_part && path == upload_url }
+      assert_equal "PUT", upload.last.fetch(:method)
+      assert_equal "PNG!", upload.last.fetch(:body)
+      reorder = client.calls.find { |method, path, _| method == :patch && path == relationship_path }
+      assert_equal ["new-1"], reorder.last.fetch("data").map { |asset| asset.fetch("id") }
+    end
   end
 end

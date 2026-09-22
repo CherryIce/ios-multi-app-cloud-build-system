@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "app_store_metadata"
+require_relative "app_store_media"
 
 module IOSBuild
   module ASC
@@ -21,6 +22,9 @@ module IOSBuild
         DEVELOPER_REMOVED_FROM_SALE REMOVED_FROM_SALE REPLACED_WITH_NEW_VERSION
       ].freeze
       EDITABLE_VERSION_STATES = (MUTABLE_VERSION_STATES + ["READY_FOR_REVIEW"]).freeze
+      MEDIA_EDITABLE_VERSION_STATES = %w[
+        PREPARE_FOR_SUBMISSION INVALID_BINARY REJECTED METADATA_REJECTED DEVELOPER_REJECTED
+      ].freeze
       BLOCKING_SUBMISSION_STATES = %w[
         WAITING_FOR_REVIEW IN_REVIEW UNRESOLVED_ISSUES CANCELING COMPLETING
       ].freeze
@@ -28,7 +32,8 @@ module IOSBuild
 
       def initialize(
         client:, app_id:, marketing_version:, metadata:, build_id: nil, build_number: nil,
-        automatic_release:, submit_to_review:, demo_account_name: "", demo_account_password: ""
+        automatic_release:, submit_to_review:, demo_account_name: "", demo_account_password: "",
+        update_text_metadata: false, replace_media: false, workspace: Dir.pwd
       )
         @client = client
         @app_id = app_id
@@ -40,6 +45,9 @@ module IOSBuild
         @submit_to_review = submit_to_review
         @demo_account_name = demo_account_name
         @demo_account_password = demo_account_password
+        @update_text_metadata = update_text_metadata
+        @replace_media = replace_media
+        @workspace = workspace
       end
 
       def prepare
@@ -48,20 +56,42 @@ module IOSBuild
         summary = base_summary(version, version_state, created)
 
         if RELEASED_VERSION_STATES.include?(version_state)
+          assert_no_requested_changes!(version_state)
           return no_op_summary(summary, reason: "already_released", released: true)
         end
         if SUBMITTED_VERSION_STATES.include?(version_state)
+          assert_no_requested_changes!(version_state)
           return no_op_summary(summary, reason: "already_submitted", submitted: true)
         end
         unless EDITABLE_VERSION_STATES.include?(version_state)
           raise ReleaseError, "App Store version #{@marketing_version} is not editable in state #{version_state || 'UNKNOWN'}"
         end
+        assert_media_editable!(version_state)
 
         version = update_version(version)
         assert_release_policy(version)
-        sync_localizations(version.fetch("id"))
-        sync_review_detail(version.fetch("id"))
-        base_summary(version, state_of(version), created).merge("metadata_synced" => true)
+        summary = base_summary(version, state_of(version), created)
+        if @update_text_metadata
+          sync_app_info_localizations
+          sync_localizations(version.fetch("id"))
+          sync_review_detail(version.fetch("id"))
+          summary = summary.merge("metadata_synced" => true, "text_metadata_updated" => true)
+        end
+        if @replace_media
+          locales = @metadata.fetch("media").keys
+          localizations = ensure_version_localizations(version.fetch("id"), locales)
+          media_summary = AppStoreMedia.new(client: @client, workspace: @workspace).replace!(
+            @metadata.fetch("media"),
+            localizations
+          )
+          summary = summary.merge(
+            "media_replaced" => true,
+            "media_collections_replaced" => media_summary.fetch("collections"),
+            "screenshots_uploaded" => media_summary.fetch("screenshots"),
+            "previews_uploaded" => media_summary.fetch("previews")
+          )
+        end
+        summary
       end
 
       def execute
@@ -70,27 +100,39 @@ module IOSBuild
         summary = base_summary(version, version_state, created)
 
         if RELEASED_VERSION_STATES.include?(version_state)
-          return no_op_summary(summary, reason: "already_released", released: true)
+          return no_op_summary(summary, reason: "already_released", released: true).merge(
+            "text_metadata_updated" => @update_text_metadata,
+            "media_replaced" => @replace_media
+          )
         end
 
         if SUBMITTED_VERSION_STATES.include?(version_state)
-          return no_op_summary(summary, reason: "already_submitted", submitted: true)
+          return no_op_summary(summary, reason: "already_submitted", submitted: true).merge(
+            "text_metadata_updated" => @update_text_metadata,
+            "media_replaced" => @replace_media
+          )
         end
 
         unless EDITABLE_VERSION_STATES.include?(version_state)
           raise ReleaseError, "App Store version #{@marketing_version} is not editable in state #{version_state || 'UNKNOWN'}"
         end
+        assert_media_editable!(version_state)
 
         verify_and_update_build
         version = update_version(version)
         assert_release_policy(version)
-        sync_localizations(version.fetch("id"))
-        sync_review_detail(version.fetch("id"))
+        if @update_text_metadata
+          sync_app_info_localizations
+          sync_localizations(version.fetch("id"))
+          sync_review_detail(version.fetch("id"))
+        end
         attach_build(version.fetch("id"))
 
         summary = base_summary(version, state_of(version), created).merge(
           "build_attached" => true,
-          "metadata_synced" => true
+          "metadata_synced" => @update_text_metadata,
+          "text_metadata_updated" => @update_text_metadata,
+          "media_replaced" => @replace_media
         )
         return summary unless @submit_to_review
 
@@ -116,7 +158,7 @@ module IOSBuild
         attributes = {
           "platform" => "IOS",
           "versionString" => @marketing_version
-        }.merge(AppStoreMetadata.version_attributes(@metadata, automatic_release: @automatic_release))
+        }.merge(desired_version_attributes)
         response = @client.post(
           "/v1/appStoreVersions",
           {
@@ -148,7 +190,7 @@ module IOSBuild
       end
 
       def update_version(version)
-        desired = AppStoreMetadata.version_attributes(@metadata, automatic_release: @automatic_release)
+        desired = desired_version_attributes
         current = version.fetch("attributes", {})
         changes = desired.reject { |key, value| current[key] == value }
         return version if changes.empty?
@@ -166,6 +208,11 @@ module IOSBuild
         response.fetch("data")
       end
 
+      def desired_version_attributes
+        metadata = @update_text_metadata ? @metadata : {}
+        AppStoreMetadata.version_attributes(metadata, automatic_release: @automatic_release)
+      end
+
       def assert_release_policy(version)
         desired = @automatic_release ? "AFTER_APPROVAL" : "MANUAL"
         actual = version.dig("attributes", "releaseType")
@@ -175,6 +222,33 @@ module IOSBuild
       end
 
       def sync_localizations(version_id)
+        requested = @metadata.fetch("localizations", {})
+        return {} if requested.empty?
+
+        localizations = ensure_version_localizations(version_id, requested.keys)
+        requested.each do |locale, source_attributes|
+          localization = localizations.fetch(locale)
+          attributes = AppStoreMetadata.localization_attributes(source_attributes)
+          @client.patch(
+            "/v1/appStoreVersionLocalizations/#{localization.fetch('id')}",
+            {
+              "data" => {
+                "type" => "appStoreVersionLocalizations",
+                "id" => localization.fetch("id"),
+                "attributes" => attributes
+              }
+            }
+          )
+          verify_attributes(
+            @client.get("/v1/appStoreVersionLocalizations/#{localization.fetch('id')}").fetch("data"),
+            attributes,
+            "App Store version localization #{locale}"
+          )
+        end
+        localizations
+      end
+
+      def ensure_version_localizations(version_id, locales)
         existing = @client.paginate(
           "/v1/appStoreVersions/#{version_id}/appStoreVersionLocalizations",
           { "limit" => "200" }
@@ -182,27 +256,15 @@ module IOSBuild
           result[localization.dig("attributes", "locale")] = localization
         end
 
-        @metadata.fetch("localizations").each do |locale, source_attributes|
-          attributes = AppStoreMetadata.localization_attributes(source_attributes)
-          localization = existing[locale]
-          if localization
-            @client.patch(
-              "/v1/appStoreVersionLocalizations/#{localization.fetch('id')}",
-              {
-                "data" => {
-                  "type" => "appStoreVersionLocalizations",
-                  "id" => localization.fetch("id"),
-                  "attributes" => attributes
-                }
-              }
-            )
-          else
-            @client.post(
+        locales.each do |locale|
+          next if existing[locale]
+
+          response = @client.post(
               "/v1/appStoreVersionLocalizations",
               {
                 "data" => {
                   "type" => "appStoreVersionLocalizations",
-                  "attributes" => { "locale" => locale }.merge(attributes),
+                  "attributes" => { "locale" => locale },
                   "relationships" => {
                     "appStoreVersion" => {
                       "data" => { "type" => "appStoreVersions", "id" => version_id }
@@ -211,7 +273,64 @@ module IOSBuild
                 }
               }
             )
+          existing[locale] = response.fetch("data")
+        end
+        existing.slice(*locales)
+      end
+
+      def sync_app_info_localizations
+        requested = @metadata.fetch("app_info_localizations", {})
+        return if requested.empty?
+
+        infos = @client.paginate("/v1/apps/#{@app_id}/appInfos", { "limit" => "200" })
+        editable = infos.select do |info|
+          EDITABLE_VERSION_STATES.include?(info.dig("attributes", "state") || info.dig("attributes", "appStoreState"))
+        end
+        unless editable.length == 1
+          raise ReleaseError, "expected exactly one editable App Info resource; found #{editable.length}"
+        end
+        info = editable.first
+        existing = @client.paginate(
+          "/v1/appInfos/#{info.fetch('id')}/appInfoLocalizations",
+          { "limit" => "200" }
+        ).each_with_object({}) do |localization, result|
+          result[localization.dig("attributes", "locale")] = localization
+        end
+
+        requested.each do |locale, source_attributes|
+          attributes = AppStoreMetadata.app_info_localization_attributes(source_attributes)
+          localization = existing[locale]
+          if localization
+            @client.patch(
+              "/v1/appInfoLocalizations/#{localization.fetch('id')}",
+              {
+                "data" => {
+                  "type" => "appInfoLocalizations",
+                  "id" => localization.fetch("id"),
+                  "attributes" => attributes
+                }
+              }
+            )
+          else
+            response = @client.post(
+              "/v1/appInfoLocalizations",
+              {
+                "data" => {
+                  "type" => "appInfoLocalizations",
+                  "attributes" => { "locale" => locale }.merge(attributes),
+                  "relationships" => {
+                    "appInfo" => { "data" => { "type" => "appInfos", "id" => info.fetch("id") } }
+                  }
+                }
+              }
+            )
+            localization = response.fetch("data")
           end
+          verify_attributes(
+            @client.get("/v1/appInfoLocalizations/#{localization.fetch('id')}").fetch("data"),
+            attributes,
+            "App Info localization #{locale}"
+          )
         end
       end
 
@@ -237,7 +356,7 @@ module IOSBuild
             }
           )
         else
-          @client.post(
+          response = @client.post(
             "/v1/appStoreReviewDetails",
             {
               "data" => {
@@ -251,7 +370,39 @@ module IOSBuild
               }
             }
           )
+          detail = response.fetch("data")
         end
+        verify_attributes(
+          @client.get("/v1/appStoreReviewDetails/#{detail.fetch('id')}").fetch("data"),
+          attributes.reject { |key, _value| key == "demoAccountPassword" },
+          "App Review detail"
+        )
+      end
+
+      def verify_attributes(resource, expected, label)
+        actual = resource.fetch("attributes", {})
+        mismatches = expected.reject { |key, value| actual[key] == value }
+        return if mismatches.empty?
+
+        raise ReleaseError, "failed to verify #{label}: #{mismatches.keys.join(', ')}"
+      end
+
+      def assert_no_requested_changes!(version_state)
+        return unless @update_text_metadata || @replace_media
+
+        requested = []
+        requested << "text metadata" if @update_text_metadata
+        requested << "screenshots/app previews" if @replace_media
+        raise ReleaseError,
+              "requested ASC #{requested.join(' and ')} changes cannot be applied while version #{@marketing_version} is in state #{version_state}"
+      end
+
+      def assert_media_editable!(version_state)
+        return unless @replace_media
+        return if MEDIA_EDITABLE_VERSION_STATES.include?(version_state)
+
+        raise ReleaseError,
+              "ASC media cannot be replaced while App Store version #{@marketing_version} is in state #{version_state}"
       end
 
       def verify_and_update_build
@@ -416,6 +567,11 @@ module IOSBuild
           "version_created" => created,
           "automatic_release" => @automatic_release,
           "metadata_synced" => false,
+          "text_metadata_updated" => false,
+          "media_replaced" => false,
+          "media_collections_replaced" => 0,
+          "screenshots_uploaded" => 0,
+          "previews_uploaded" => 0,
           "build_attached" => false,
           "review_submitted" => false,
           "already_submitted" => false,

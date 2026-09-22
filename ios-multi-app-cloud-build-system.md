@@ -289,7 +289,7 @@ artifacts:
 - `upload.enabled_by_default` 是模板建议值，不会越过 workflow input；参考 workflow 默认仍不上传。
 - `app_store` 为可选配置段；缺失或 `enabled=false` 时保持原有 Build/TestFlight 行为。
 - `app_store.enabled=true` 时，`upload.wait_level` 必须为 `processing_complete` 或 `testflight_internal_ready`。
-- `app_store.metadata_path` 只能指向 App 仓库内的安全 YAML；每个 locale 必须提供非空 `whats_new`。
+- `app_store.metadata_path` 只能指向 App 仓库内的安全 YAML。文本元数据按字段增量声明，未声明的 locale/字段保持 ASC 现状；声明 `whats_new` 时必须非空。
 - `app_store.automatic_release=true` 只控制审核通过后的发布方式，不代表审核已经通过。
 - 自定义依赖命令只能来自受保护分支中的配置，不能让 `workflow_dispatch` 接受任意 shell 字符串。
 
@@ -515,6 +515,16 @@ on:
         required: true
         default: false
         type: boolean
+      update_asc_text_metadata:
+        description: Update only declared ASC text metadata fields
+        required: true
+        default: false
+        type: boolean
+      replace_asc_media:
+        description: Replace only declared ASC media collections
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -545,6 +555,8 @@ jobs:
           build_number: ${{ inputs.build_number }}
           upload_to_asc: ${{ inputs.upload_to_asc }}
           submit_to_review: ${{ inputs.submit_to_review }}
+          update_asc_text_metadata: ${{ inputs.update_asc_text_metadata }}
+          replace_asc_media: ${{ inputs.replace_asc_media }}
           ios_distribution_p12_base64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
           ios_distribution_p12_password: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
           ios_profiles_archive_base64: ${{ secrets.IOS_PROFILES_ARCHIVE_BASE64 }}
@@ -575,6 +587,8 @@ jobs:
 | `build_number` | 空或只接受项目允许的数字格式 |
 | `upload_to_asc` | Boolean |
 | `submit_to_review` | Boolean；为 `true` 时要求 `upload_to_asc=true` 且 `app_store.enabled=true` |
+| `update_asc_text_metadata` | Boolean，默认 `false`；仅修改 metadata YAML 明确声明的文本字段 |
+| `replace_asc_media` | Boolean，默认 `false`；仅替换 metadata YAML 明确声明的 locale/display-type 媒体集合 |
 
 ### 11.2 标准输出
 
@@ -599,6 +613,8 @@ jobs:
 | `app_store_no_op_reason` | `already_submitted` / `already_released` |
 | `app_store_already_submitted` | 目标版本已进入提审流程时为 `true` |
 | `app_store_already_released` | 目标版本已发布时为 `true` |
+| `asc_text_metadata_updated` | 本次已写入并回读验证声明的文本字段 |
+| `asc_media_replaced` | 本次已替换并回读验证声明的媒体集合 |
 
 ### 11.3 失败原则
 
@@ -1163,26 +1179,28 @@ Apple 明确说明 build 上传后需要在其系统中异步处理，处理完�
 2. Prepare：按 `app + IOS + versionString` 查询 App Store version；存在则复用，不存在则在确认版本高于当前已发布版本后创建。
 3. Prepare：若目标版本已经提审或已经发布，记录幂等 no-op 并停止该版本的商店变更；不重复建版本、不更换已提交版本的 build，也不重复提审。
 4. Prepare：若目标版本不存在则创建；若存在且仍可编辑（包括 `READY_FOR_REVIEW`）则复用。`automatic_release=true` 映射为 `releaseType=AFTER_APPROVAL`；否则使用 `MANUAL`。
-5. Prepare：从仓库内的 metadata YAML 增量创建或更新各 locale 的版本文本。每个配置 locale 必须包含 `whats_new`，未配置的 ASC locale 不删除。
-6. Prepare：App Review 联系信息可由 metadata YAML 更新；需要登录时，账号和密码必须由受保护 Secrets 输入，不能写入仓库或 Artifact。
-7. 等待：执行步骤 16 的精确 build 轮询；可选执行步骤 17 的 TestFlight 分组。
-8. Finalize：对仍可编辑的目标版本，重新读取精确 `asc_build_id` 和 build number，确认 `processingState=VALID` 且关联 prerelease version 等于本次 marketing version。
-9. Finalize：可选地更新 `usesNonExemptEncryption`，随后修改并再次读取 App Store version 的 build relationship，确认绑定的是精确 build。
-10. Finalize：`submit_to_review=false` 时在版本准备完成后停止；为 `true` 时创建或复用 iOS Review Submission、创建版本 item，并设置 `submitted=true`，再读取提交状态确认已经离开草稿状态。
-11. Finalize：若版本在等待 build 期间已经被其他运行提审或发布，再次以成功 no-op 结束。
+5. Prepare：`update_asc_text_metadata=false` 时不写 App 名称、副标题、描述、版本新增内容、关键词或审核联系信息。为 `true` 时，只 PATCH metadata YAML 已声明的 locale/字段，随后 GET 回读逐字段验证；未声明值保持现状。
+6. Prepare：App Review 需要登录时，账号和密码必须由受保护 Secrets 输入，不能写入仓库或 Artifact。
+7. Prepare：`replace_asc_media=false` 时不动截图和 App Preview。为 `true` 时，只替换 metadata YAML 中声明的 locale + display type 集合；对每个新文件完成预留、Apple 指定分片上传、MD5 提交、`COMPLETE`/失败轮询、排序和 relationship 回读验证。
+8. 媒体替换是声明集合范围内的破坏性操作：脚本先验证全部本地文件，再删除该集合旧资源并上传新资源。不是跨资源事务；中途失败需要重跑或在 ASC 修复。
+9. 等待：执行步骤 16 的精确 build 轮询；可选执行步骤 17 的 TestFlight 分组。
+10. Finalize：对仍可编辑的目标版本，重新读取精确 `asc_build_id` 和 build number，确认 `processingState=VALID` 且关联 prerelease version 等于本次 marketing version。
+11. Finalize：可选地更新 `usesNonExemptEncryption`，随后修改并再次读取 App Store version 的 build relationship，确认绑定的是精确 build。
+12. Finalize：`submit_to_review=false` 时在版本准备完成后停止；为 `true` 时创建或复用 iOS Review Submission、创建版本 item，并设置 `submitted=true`，再读取提交状态确认已经离开草稿状态。
+13. Finalize：若版本在等待 build 期间已经被其他运行提审或发布，再次以成功 no-op 结束。
 
 成功判据：
 
-- 新建或可编辑版本的 Prepare 成功：`app-store-status.json` 包含 App Store version ID 和 `metadata_synced=true`；Finalize 成功后还包含精确 build ID 和 `build_attached=true`。
+- 新建或可编辑版本的 Prepare 成功：`app-store-status.json` 包含 App Store version ID。请求文本/媒体变更时，还分别要求 `text_metadata_updated=true` / `media_replaced=true`；Finalize 成功后包含精确 build ID 和 `build_attached=true`。
 - 已提审或已发布版本：`app-store-status.json` 包含 `no_op=true`，并分别记录 `no_op_reason=already_submitted` 或 `already_released`。
 - 提审阶段：Review Submission 有稳定 ID，API 返回 `WAITING_FOR_REVIEW` 或后续状态；不能只凭 workflow 绿色就声称审核通过。
 - 自动发布：只证明商店版本设置为审核后自动发布。实际审核通过和商店可见仍是后续独立证据。
 
 失败处理：
 
-- 已有不同版本占用可编辑/审核状态、版本号不递增、build 不属于目标 marketing version、metadata 缺失或 Apple 拒绝提审时立即失败。
+- 已有不同版本占用可编辑/审核状态、版本号不递增、build 不属于目标 marketing version、明确请求的 metadata/媒体变更不可写，或 Apple 拒绝提审时立即失败；不会把请求的变更静默降级为 no-op。
 - 保留不含凭据的 `app-store-status.json`；重跑应从 ASC 当前状态继续，不重新创建相同版本。
-- 截图、App Preview 或其他未由本实现管理的必填项缺失时，由 Apple 提审校验返回错误；调用方应先在 ASC 或独立媒体上传流程补齐。
+- 未在 metadata YAML 声明的截图、App Preview 或其他必填项不由本次运行修改；若仍不满足提审条件，由 Apple 提审校验返回错误。
 
 Apple 提供创建 App Store version、修改版本 build relationship、Review Submission 和 Review Submission Item API。[A13][A14][A15][A16]
 
@@ -1401,7 +1419,8 @@ app-a-appstore：只保存 P8              → 下载已校验 IPA 并上传 ASC
 - [ ] Artifact 在上传前保存。
 - [ ] ASC 使用 App/version/build 精确查询。
 - [ ] TestFlight 成功标准不是“上传命令返回 0”。
-- [ ] App Store metadata 每个配置 locale 都有 `whats_new`，且没有提交 demo 密码。
+- [ ] App Store metadata 只声明本次确实要修改的 locale/字段；声明 `whats_new` 时非空，且没有提交 demo 密码。
+- [ ] `update_asc_text_metadata` / `replace_asc_media` 默认为 `false`；打开前已复核 metadata 补丁和媒体文件顺序。
 - [ ] `submit_to_review` 默认关闭，只在预期发布运行中显式开启。
 - [ ] 精确 build relationship 与 Review Submission 状态均已复查。
 - [ ] `automatic_release=true` 没有被误报为“审核通过”或“已经上架”。
