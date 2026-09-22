@@ -595,6 +595,10 @@ jobs:
 | `review_submission_id` | Apple Review Submission resource ID |
 | `review_submission_state` | `WAITING_FOR_REVIEW`、`IN_REVIEW` 等 |
 | `review_submitted` | `true` / `false` |
+| `app_store_no_op` | 目标版本已提审或已发布时为 `true` |
+| `app_store_no_op_reason` | `already_submitted` / `already_released` |
+| `app_store_already_submitted` | 目标版本已进入提审流程时为 `true` |
+| `app_store_already_released` | 目标版本已发布时为 `true` |
 
 ### 11.3 失败原则
 
@@ -1157,18 +1161,20 @@ Apple 明确说明 build 上传后需要在其系统中异步处理，处理完�
 
 1. 只有 `app_store.enabled=true` 且 `upload_to_asc=true` 才进入此阶段。
 2. Prepare：按 `app + IOS + versionString` 查询 App Store version；存在则复用，不存在则在确认版本高于当前已发布版本后创建。
-3. Prepare：`automatic_release=true` 映射为 `releaseType=AFTER_APPROVAL`；否则使用 `MANUAL`。
-4. Prepare：从仓库内的 metadata YAML 增量创建或更新各 locale 的版本文本。每个配置 locale 必须包含 `whats_new`，未配置的 ASC locale 不删除。
-5. Prepare：App Review 联系信息可由 metadata YAML 更新；需要登录时，账号和密码必须由受保护 Secrets 输入，不能写入仓库或 Artifact。
-6. 等待：执行步骤 16 的精确 build 轮询；可选执行步骤 17 的 TestFlight 分组。
-7. Finalize：重新读取精确 `asc_build_id` 和 build number，确认 `processingState=VALID` 且关联 prerelease version 等于本次 marketing version。
-8. Finalize：可选地更新 `usesNonExemptEncryption`，随后修改并再次读取 App Store version 的 build relationship，确认绑定的是精确 build。
-9. Finalize：`submit_to_review=false` 时在版本准备完成后停止；为 `true` 时创建或复用 iOS Review Submission、创建版本 item，并设置 `submitted=true`，再读取提交状态确认已经离开草稿状态。
-10. 重跑时识别现有版本、草稿提交和已经进入 `WAITING_FOR_REVIEW`/`IN_REVIEW` 的提交，不重复创建或重复提交。
+3. Prepare：若目标版本已经提审或已经发布，记录幂等 no-op 并停止该版本的商店变更；不重复建版本、不更换已提交版本的 build，也不重复提审。
+4. Prepare：若目标版本不存在则创建；若存在且仍可编辑（包括 `READY_FOR_REVIEW`）则复用。`automatic_release=true` 映射为 `releaseType=AFTER_APPROVAL`；否则使用 `MANUAL`。
+5. Prepare：从仓库内的 metadata YAML 增量创建或更新各 locale 的版本文本。每个配置 locale 必须包含 `whats_new`，未配置的 ASC locale 不删除。
+6. Prepare：App Review 联系信息可由 metadata YAML 更新；需要登录时，账号和密码必须由受保护 Secrets 输入，不能写入仓库或 Artifact。
+7. 等待：执行步骤 16 的精确 build 轮询；可选执行步骤 17 的 TestFlight 分组。
+8. Finalize：对仍可编辑的目标版本，重新读取精确 `asc_build_id` 和 build number，确认 `processingState=VALID` 且关联 prerelease version 等于本次 marketing version。
+9. Finalize：可选地更新 `usesNonExemptEncryption`，随后修改并再次读取 App Store version 的 build relationship，确认绑定的是精确 build。
+10. Finalize：`submit_to_review=false` 时在版本准备完成后停止；为 `true` 时创建或复用 iOS Review Submission、创建版本 item，并设置 `submitted=true`，再读取提交状态确认已经离开草稿状态。
+11. Finalize：若版本在等待 build 期间已经被其他运行提审或发布，再次以成功 no-op 结束。
 
 成功判据：
 
 - 新建或可编辑版本的 Prepare 成功：`app-store-status.json` 包含 App Store version ID 和 `metadata_synced=true`；Finalize 成功后还包含精确 build ID 和 `build_attached=true`。
+- 已提审或已发布版本：`app-store-status.json` 包含 `no_op=true`，并分别记录 `no_op_reason=already_submitted` 或 `already_released`。
 - 提审阶段：Review Submission 有稳定 ID，API 返回 `WAITING_FOR_REVIEW` 或后续状态；不能只凭 workflow 绿色就声称审核通过。
 - 自动发布：只证明商店版本设置为审核后自动发布。实际审核通过和商店可见仍是后续独立证据。
 

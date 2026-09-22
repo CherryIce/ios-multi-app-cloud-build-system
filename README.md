@@ -72,7 +72,8 @@ ios-multi-app-cloud-build-system-additions/ Fastlane/Bitrise 草稿
 3. 同步配置文件中的本地化文本和可选 App Review 联系信息。
 4. 确认精确 ASC build 为 `VALID`，处理可选出口合规声明，并绑定该 build。
 5. 仅在 `submit_to_review=true` 时创建或复用 Review Submission、加入版本并提交。
-6. 重跑时识别已有版本和已有提交，避免重复创建。
+6. 同版本仍可编辑（包括 `READY_FOR_REVIEW`）时，复用该版本、绑定本次处理完成的 build，并按开关继续提审。
+7. 同版本已经提审或已经发布时，App Store 阶段以成功 no-op 结束，不重复建版本、不替换已提交版本的 build，也不重复提审；结果通过 `app_store_no_op` 和 `app_store_no_op_reason` 输出。
 
 版本更新说明 `whats_new` 必须为每个配置的 locale 提供。截图和 App Preview 继续使用 ASC 从已发布版本复制的资源；当前实现不上传新的媒体资源。若 ASC 缺少其他必填字段，提审 API 会失败并保留 `app-store-status.json` 诊断。`automatic_release` 只设置审核后的发布策略，不代表 Apple 已审核通过，也不代表 App 已经在商店可见。
 

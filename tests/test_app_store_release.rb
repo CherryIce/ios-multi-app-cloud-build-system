@@ -127,6 +127,32 @@ class AppStoreReleaseTest < Minitest::Test
     refute client.calls.any? { |_method, path, _| path.start_with?("/v1/builds/") }
   end
 
+  def test_prepare_phase_is_a_no_op_for_an_already_submitted_version
+    client = ScriptedASCClient.new
+    submitted_version = editable_version("MANUAL")
+    submitted_version["attributes"]["appVersionState"] = "WAITING_FOR_REVIEW"
+    client.enqueue(:paginate, "/v1/apps/#{APP_ID}/appStoreVersions", [submitted_version])
+
+    summary = release(client, submit: true).prepare
+
+    assert_equal true, summary["already_submitted"]
+    assert_equal true, summary["no_op"]
+    assert_equal "already_submitted", summary["no_op_reason"]
+    assert_equal 1, client.calls.length
+  end
+
+  def test_prepare_phase_is_a_no_op_for_an_already_released_version
+    client = ScriptedASCClient.new
+    client.enqueue(:paginate, "/v1/apps/#{APP_ID}/appStoreVersions", [distributed_version(VERSION)])
+
+    summary = release(client, submit: true).prepare
+
+    assert_equal true, summary["already_released"]
+    assert_equal true, summary["no_op"]
+    assert_equal "already_released", summary["no_op_reason"]
+    assert_equal 1, client.calls.length
+  end
+
   def test_reuses_version_and_submits_a_review_submission
     client = ScriptedASCClient.new
     versions_path = "/v1/apps/#{APP_ID}/appStoreVersions"
@@ -167,51 +193,43 @@ class AppStoreReleaseTest < Minitest::Test
 
   def test_rerun_confirms_existing_submission_without_mutation
     client = ScriptedASCClient.new
-    client.enqueue(:get, "/v1/builds/#{BUILD_ID}", valid_build_response)
     submitted_version = editable_version("AFTER_APPROVAL")
     submitted_version["attributes"]["appVersionState"] = "WAITING_FOR_REVIEW"
     client.enqueue(:paginate, "/v1/apps/#{APP_ID}/appStoreVersions", [submitted_version])
-    relationship_path = "/v1/appStoreVersions/#{VERSION_ID}/relationships/build"
-    client.enqueue(:get, relationship_path, { "data" => { "type" => "builds", "id" => BUILD_ID } })
-    client.enqueue(:paginate, "/v1/apps/#{APP_ID}/reviewSubmissions", [review_submission("WAITING_FOR_REVIEW")])
-    client.enqueue(
-      :paginate,
-      "/v1/reviewSubmissions/submission-1/items",
-      [{
-        "type" => "reviewSubmissionItems",
-        "id" => "item-1",
-        "relationships" => {
-          "appStoreVersion" => { "data" => { "type" => "appStoreVersions", "id" => VERSION_ID } }
-        }
-      }]
-    )
 
     summary = release(client, submit: true).execute
 
     assert_equal true, summary["already_submitted"]
     assert_equal true, summary["review_submitted"]
+    assert_equal true, summary["no_op"]
+    assert_equal "already_submitted", summary["no_op_reason"]
     refute client.calls.any? { |method, _path, _| %i[post patch].include?(method) }
+    refute client.calls.any? { |_method, path, _| path.start_with?("/v1/builds/") }
   end
 
-  def test_rejects_a_submitted_version_that_points_to_a_different_build
+  def test_submitted_version_is_a_no_op_even_when_the_new_upload_is_a_different_build
     client = ScriptedASCClient.new
-    client.enqueue(:get, "/v1/builds/#{BUILD_ID}", valid_build_response)
     submitted_version = editable_version("AFTER_APPROVAL")
     submitted_version["attributes"]["appVersionState"] = "WAITING_FOR_REVIEW"
     client.enqueue(:paginate, "/v1/apps/#{APP_ID}/appStoreVersions", [submitted_version])
-    relationship_path = "/v1/appStoreVersions/#{VERSION_ID}/relationships/build"
-    client.enqueue(:get, relationship_path, { "data" => { "type" => "builds", "id" => "another-build" } })
 
-    error = assert_raises(IOSBuild::ASC::ReleaseError) { release(client, submit: true).execute }
-    assert_includes error.message, "failed to verify build"
-    refute client.calls.any? { |method, path, _| method == :patch && path.include?("reviewSubmissions") }
+    summary = release(client, submit: true).execute
+
+    assert_equal true, summary["no_op"]
+    assert_equal "already_submitted", summary["no_op_reason"]
+    assert_equal false, summary["build_attached"]
+    assert_equal [[:paginate, "/v1/apps/#{APP_ID}/appStoreVersions", {
+      "filter[versionString]" => VERSION,
+      "filter[platform]" => "IOS",
+      "limit" => "200"
+    }]], client.calls
   end
 
   def test_does_not_reuse_a_completed_submission_for_an_editable_version
     client = ScriptedASCClient.new
     versions_path = "/v1/apps/#{APP_ID}/appStoreVersions"
-    client.enqueue(:get, "/v1/builds/#{BUILD_ID}", valid_build_response)
     client.enqueue(:paginate, versions_path, [editable_version("AFTER_APPROVAL")])
+    client.enqueue(:get, "/v1/builds/#{BUILD_ID}", valid_build_response)
     localizations_path = "/v1/appStoreVersions/#{VERSION_ID}/appStoreVersionLocalizations"
     client.enqueue(:paginate, localizations_path, [localization("en-US", "loc-en"), localization("zh-Hans", "loc-zh")])
     client.enqueue(:patch, "/v1/appStoreVersionLocalizations/loc-en", {})
@@ -254,25 +272,71 @@ class AppStoreReleaseTest < Minitest::Test
     assert_includes error.message, "does not belong"
   end
 
-  def test_rejects_an_already_distributed_target_version
+  def test_already_distributed_target_version_is_a_successful_no_op
     client = ScriptedASCClient.new
-    client.enqueue(:get, "/v1/builds/#{BUILD_ID}", valid_build_response)
     client.enqueue(:paginate, "/v1/apps/#{APP_ID}/appStoreVersions", [distributed_version(VERSION)])
 
-    error = assert_raises(IOSBuild::ASC::ReleaseError) { release(client, submit: true).execute }
-    assert_includes error.message, "already distributed"
+    summary = release(client, submit: true).execute
+
+    assert_equal true, summary["already_released"]
+    assert_equal true, summary["no_op"]
+    assert_equal "already_released", summary["no_op_reason"]
+    assert_equal false, summary["review_submitted"]
+    refute client.calls.any? { |_method, path, _| path.start_with?("/v1/builds/") }
   end
 
-  def test_refuses_to_submit_a_draft_with_the_wrong_release_policy
+  def test_historically_released_target_version_is_a_successful_no_op
     client = ScriptedASCClient.new
-    client.enqueue(:get, "/v1/builds/#{BUILD_ID}", valid_build_response)
+    historical = distributed_version(VERSION)
+    historical["attributes"]["appVersionState"] = "REPLACED_WITH_NEW_VERSION"
+    client.enqueue(:paginate, "/v1/apps/#{APP_ID}/appStoreVersions", [historical])
+
+    summary = release(client, submit: true).execute
+
+    assert_equal true, summary["already_released"]
+    assert_equal "already_released", summary["no_op_reason"]
+    assert_equal 1, client.calls.length
+  end
+
+  def test_ready_for_review_version_is_updated_with_the_new_build_and_submitted
+    client = ScriptedASCClient.new
     draft = editable_version("MANUAL")
     draft["attributes"]["appVersionState"] = "READY_FOR_REVIEW"
     client.enqueue(:paginate, "/v1/apps/#{APP_ID}/appStoreVersions", [draft])
+    client.enqueue(:get, "/v1/builds/#{BUILD_ID}", valid_build_response)
+    updated = editable_version("AFTER_APPROVAL")
+    updated["attributes"]["appVersionState"] = "READY_FOR_REVIEW"
+    client.enqueue(:patch, "/v1/appStoreVersions/#{VERSION_ID}", { "data" => updated })
+    localizations_path = "/v1/appStoreVersions/#{VERSION_ID}/appStoreVersionLocalizations"
+    client.enqueue(:paginate, localizations_path, [localization("en-US", "loc-en"), localization("zh-Hans", "loc-zh")])
+    client.enqueue(:patch, "/v1/appStoreVersionLocalizations/loc-en", {})
+    client.enqueue(:patch, "/v1/appStoreVersionLocalizations/loc-zh", {})
+    client.enqueue(
+      :get,
+      "/v1/appStoreVersions/#{VERSION_ID}/appStoreReviewDetail",
+      { "data" => { "type" => "appStoreReviewDetails", "id" => "review-detail-1" } }
+    )
+    client.enqueue(:patch, "/v1/appStoreReviewDetails/review-detail-1", {})
+    relationship_path = "/v1/appStoreVersions/#{VERSION_ID}/relationships/build"
+    client.enqueue(:patch, relationship_path, {})
+    client.enqueue(:get, relationship_path, { "data" => { "type" => "builds", "id" => BUILD_ID } })
+    submissions_path = "/v1/apps/#{APP_ID}/reviewSubmissions"
+    client.enqueue(:paginate, submissions_path, [])
+    client.enqueue(:paginate, submissions_path, [])
+    client.enqueue(:post, "/v1/reviewSubmissions", { "data" => review_submission("READY_FOR_REVIEW") })
+    client.enqueue(:post, "/v1/reviewSubmissionItems", {})
+    client.enqueue(:patch, "/v1/reviewSubmissions/submission-1", { "data" => review_submission("WAITING_FOR_REVIEW") })
+    client.enqueue(:get, "/v1/reviewSubmissions/submission-1", { "data" => review_submission("WAITING_FOR_REVIEW") })
 
-    error = assert_raises(IOSBuild::ASC::ReleaseError) { release(client, submit: true).execute }
-    assert_includes error.message, "expected AFTER_APPROVAL"
-    refute client.calls.any? { |method, _path, _| %i[post patch].include?(method) }
+    summary = release(client, submit: true).execute
+
+    assert_equal true, summary["build_attached"]
+    assert_equal true, summary["review_submitted"]
+    assert_equal false, summary["no_op"]
+    release_update = client.calls.find do |method, path, _argument|
+      method == :patch && path == "/v1/appStoreVersions/#{VERSION_ID}"
+    end
+    assert_equal "AFTER_APPROVAL", release_update.last.dig("data", "attributes", "releaseType")
   end
 
   private

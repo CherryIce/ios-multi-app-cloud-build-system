@@ -65,6 +65,20 @@ class ContractTest < Minitest::Test
                  wait_step.fetch("env").fetch("IOS_RESOLVED_BUILD_NUMBER")
   end
 
+  def test_action_exposes_idempotent_app_store_results
+    action = YAML.load_file(ACTION_PATH)
+    outputs = action.fetch("outputs")
+
+    assert_equal "${{ steps.app_store.outputs.app_store_no_op }}",
+                 outputs.fetch("app_store_no_op").fetch("value")
+    assert_equal "${{ steps.app_store.outputs.app_store_no_op_reason }}",
+                 outputs.fetch("app_store_no_op_reason").fetch("value")
+    assert_equal "${{ steps.app_store.outputs.app_store_already_submitted }}",
+                 outputs.fetch("app_store_already_submitted").fetch("value")
+    assert_equal "${{ steps.app_store.outputs.app_store_already_released }}",
+                 outputs.fetch("app_store_already_released").fetch("value")
+  end
+
   def test_flutter_setup_is_conditionally_restored_for_monorepo_apps
     action = YAML.load_file(ACTION_PATH)
     flutter_step = action.fetch("runs").fetch("steps").find do |step|

@@ -96,6 +96,18 @@ outputs:
   review_submitted:
     description: Whether this run submitted or confirmed an existing review submission.
     value: ${{ steps.app_store.outputs.review_submitted }}
+  app_store_no_op:
+    description: Whether App Store release work ended as a successful idempotent no-op.
+    value: ${{ steps.app_store.outputs.app_store_no_op }}
+  app_store_no_op_reason:
+    description: Reason for an App Store release no-op, such as already_submitted or already_released.
+    value: ${{ steps.app_store.outputs.app_store_no_op_reason }}
+  app_store_already_submitted:
+    description: Whether the requested App Store version was already submitted.
+    value: ${{ steps.app_store.outputs.app_store_already_submitted }}
+  app_store_already_released:
+    description: Whether the requested App Store version was already released.
+    value: ${{ steps.app_store.outputs.app_store_already_released }}
 
 runs:
   using: composite

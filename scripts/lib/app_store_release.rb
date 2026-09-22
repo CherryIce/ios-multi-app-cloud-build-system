@@ -13,9 +13,14 @@ module IOSBuild
       ].freeze
       SUBMITTED_VERSION_STATES = %w[
         WAITING_FOR_REVIEW IN_REVIEW ACCEPTED PENDING_APPLE_RELEASE
-        PENDING_DEVELOPER_RELEASE PROCESSING_FOR_APP_STORE PROCESSING_FOR_DISTRIBUTION
+        PENDING_CONTRACT PENDING_DEVELOPER_RELEASE PROCESSING_FOR_APP_STORE
+        PROCESSING_FOR_DISTRIBUTION
       ].freeze
-      RELEASED_VERSION_STATES = %w[READY_FOR_SALE READY_FOR_DISTRIBUTION PREORDER_READY_FOR_SALE].freeze
+      RELEASED_VERSION_STATES = %w[
+        READY_FOR_SALE READY_FOR_DISTRIBUTION PREORDER_READY_FOR_SALE
+        DEVELOPER_REMOVED_FROM_SALE REMOVED_FROM_SALE REPLACED_WITH_NEW_VERSION
+      ].freeze
+      EDITABLE_VERSION_STATES = (MUTABLE_VERSION_STATES + ["READY_FOR_REVIEW"]).freeze
       BLOCKING_SUBMISSION_STATES = %w[
         WAITING_FOR_REVIEW IN_REVIEW UNRESOLVED_ISSUES CANCELING COMPLETING
       ].freeze
@@ -43,13 +48,12 @@ module IOSBuild
         summary = base_summary(version, version_state, created)
 
         if RELEASED_VERSION_STATES.include?(version_state)
-          raise ReleaseError, "App Store version #{@marketing_version} is already distributed; choose a newer version"
+          return no_op_summary(summary, reason: "already_released", released: true)
         end
-        if SUBMITTED_VERSION_STATES.include?(version_state) || version_state == "READY_FOR_REVIEW"
-          assert_release_policy(version)
-          return summary.merge("already_submitted" => SUBMITTED_VERSION_STATES.include?(version_state))
+        if SUBMITTED_VERSION_STATES.include?(version_state)
+          return no_op_summary(summary, reason: "already_submitted", submitted: true)
         end
-        unless MUTABLE_VERSION_STATES.include?(version_state)
+        unless EDITABLE_VERSION_STATES.include?(version_state)
           raise ReleaseError, "App Store version #{@marketing_version} is not editable in state #{version_state || 'UNKNOWN'}"
         end
 
@@ -61,47 +65,23 @@ module IOSBuild
       end
 
       def execute
-        verify_and_update_build
         version, created = ensure_version
         version_state = state_of(version)
         summary = base_summary(version, version_state, created)
 
         if RELEASED_VERSION_STATES.include?(version_state)
-          raise ReleaseError, "App Store version #{@marketing_version} is already distributed; choose a newer version"
+          return no_op_summary(summary, reason: "already_released", released: true)
         end
 
         if SUBMITTED_VERSION_STATES.include?(version_state)
-          assert_release_policy(version)
-          assert_attached_build(version.fetch("id"))
-          submission = find_target_submission(
-            version.fetch("id"),
-            allowed_states: SUBMITTED_REVIEW_STATES
-          )
-          unless submission
-            raise ReleaseError, "App Store version is submitted but its matching review submission was not found"
-          end
-          return summary.merge(
-            submission_summary(submission),
-            "build_attached" => true,
-            "already_submitted" => true,
-            "review_submitted" => true
-          )
+          return no_op_summary(summary, reason: "already_submitted", submitted: true)
         end
 
-        if version_state == "READY_FOR_REVIEW"
-          assert_release_policy(version)
-          assert_attached_build(version.fetch("id"))
-          summary = summary.merge("build_attached" => true)
-          return summary unless @submit_to_review
-
-          submission = ensure_review_submission(version.fetch("id"))
-          return summary.merge(submission_summary(submission), "review_submitted" => true)
-        end
-
-        unless MUTABLE_VERSION_STATES.include?(version_state)
+        unless EDITABLE_VERSION_STATES.include?(version_state)
           raise ReleaseError, "App Store version #{@marketing_version} is not editable in state #{version_state || 'UNKNOWN'}"
         end
 
+        verify_and_update_build
         version = update_version(version)
         assert_release_policy(version)
         sync_localizations(version.fetch("id"))
@@ -435,11 +415,26 @@ module IOSBuild
           "build_number" => @build_number,
           "version_created" => created,
           "automatic_release" => @automatic_release,
+          "metadata_synced" => false,
+          "build_attached" => false,
           "review_submitted" => false,
           "already_submitted" => false,
+          "already_released" => false,
+          "no_op" => false,
+          "no_op_reason" => nil,
           "review_submission_id" => nil,
           "review_submission_state" => nil
         }
+      end
+
+      def no_op_summary(summary, reason:, submitted: false, released: false)
+        summary.merge(
+          "review_submitted" => submitted,
+          "already_submitted" => submitted,
+          "already_released" => released,
+          "no_op" => true,
+          "no_op_reason" => reason
+        )
       end
 
       def submission_summary(submission)

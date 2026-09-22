@@ -113,6 +113,10 @@ begin
     output.puts "review_submission_id=#{summary['review_submission_id']}"
     output.puts "review_submission_state=#{summary['review_submission_state']}"
     output.puts "review_submitted=#{summary['review_submitted']}"
+    output.puts "app_store_no_op=#{summary['no_op']}"
+    output.puts "app_store_no_op_reason=#{summary['no_op_reason']}"
+    output.puts "app_store_already_submitted=#{summary['already_submitted']}"
+    output.puts "app_store_already_released=#{summary['already_released']}"
   end
 
   puts [
@@ -121,6 +125,8 @@ begin
     "version=#{summary['marketing_version']}",
     "state=#{summary['app_store_version_state']}",
     "submitted=#{summary['review_submitted']}",
+    "no_op=#{summary['no_op']}",
+    "no_op_reason=#{summary['no_op_reason'] || 'none'}",
     "submission_state=#{summary['review_submission_state'] || 'not-submitted'}"
   ].join(" ")
 rescue IOSBuild::ASC::APIError, IOSBuild::ASC::ReleaseError, IOSBuild::ASC::MetadataError,
