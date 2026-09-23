@@ -7,7 +7,12 @@
         "cfBundleShortVersionString": "2.3.0",
         "cfBundleVersion": "1042",
         "platform": "IOS",
-        "state": "COMPLETE",
+        "state": {
+          "errors": [],
+          "warnings": [],
+          "infos": [],
+          "state": "COMPLETE"
+        },
         "uploadedDate": "2026-08-24T10:00:00Z"
       }
     }
