@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "asc-review-webhook-example-app",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-09-24",
+  "workers_dev": true,
+  "vars": {
+    "APP_DISPLAY_NAME": "ExampleApp",
+    "ASC_APP_ID": "1234567890"
+  }
+  // Optional duplicate suppression:
+  // "kv_namespaces": [
+  //   { "binding": "ASC_EVENT_DEDUP_KV", "id": "<KV_NAMESPACE_ID>" }
+  // ]
+}

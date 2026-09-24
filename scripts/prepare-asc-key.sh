@@ -21,7 +21,9 @@ key_path="${key_directory}/AuthKey_${ASC_KEY_ID}.p8"
 mkdir -p "$key_directory"
 chmod 700 "$key_directory"
 
-printf '%s' "$ASC_API_KEY_P8_BASE64" | base64 -D > "$key_path"
+printf '%s' "$ASC_API_KEY_P8_BASE64" | ruby -rbase64 -e '
+  File.binwrite(ARGV.fetch(0), Base64.strict_decode64(STDIN.read.gsub(/\s+/, "")))
+' "$key_path"
 chmod 600 "$key_path"
 openssl pkey -in "$key_path" -check -noout >/dev/null
 

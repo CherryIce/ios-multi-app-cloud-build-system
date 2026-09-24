@@ -23,6 +23,12 @@ fi
 
 ruby -Itests -e 'Dir["tests/test_*.rb"].sort.each { |file| require File.expand_path(file) }'
 
+command -v node >/dev/null 2>&1 || {
+  echo "node is required for ASC webhook contract tests" >&2
+  exit 1
+}
+node --test tests/test_asc_review_webhook.mjs
+
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck scripts/*.sh tests/*.sh
 fi

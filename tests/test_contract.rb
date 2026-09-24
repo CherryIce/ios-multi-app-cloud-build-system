@@ -10,19 +10,24 @@ require_relative "../scripts/lib/app_store_metadata"
 class ContractTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
   ACTION_PATH = File.join(ROOT, ".github/actions/build-upload/action.yml")
+  ACTION_PATHS = Dir.glob(File.join(ROOT, ".github/actions/*/action.yml")).sort.freeze
 
   def test_action_references_existing_root_scripts
-    action_text = File.read(ACTION_PATH)
-    referenced = action_text.scan(%r{scripts/([A-Za-z0-9_.-]+)}).flatten.uniq
-    refute_empty referenced
-    referenced.each do |filename|
-      assert File.file?(File.join(ROOT, "scripts", filename)), "missing scripts/#{filename}"
+    refute_empty ACTION_PATHS
+    ACTION_PATHS.each do |action_path|
+      action_text = File.read(action_path)
+      referenced = action_text.scan(%r{scripts/([A-Za-z0-9_.-]+)}).flatten.uniq
+      refute_empty referenced
+      referenced.each do |filename|
+        assert File.file?(File.join(ROOT, "scripts", filename)), "missing scripts/#{filename}"
+      end
     end
   end
 
   def test_external_actions_are_pinned_to_full_commit_shas
-    action_text = File.read(ACTION_PATH)
-    uses = action_text.scan(/^\s*uses:\s*([^\s#]+)/).flatten
+    uses = ACTION_PATHS.flat_map do |action_path|
+      File.read(action_path).scan(/^\s*uses:\s*([^\s#]+)/).flatten
+    end
     refute_empty uses
     uses.each do |reference|
       assert_match(/@[0-9a-f]{40}\z/, reference)
@@ -30,7 +35,7 @@ class ContractTest < Minitest::Test
   end
 
   def test_action_metadata_and_workflows_are_yaml
-    YAML.load_file(ACTION_PATH)
+    ACTION_PATHS.each { |action_path| YAML.load_file(action_path) }
     yaml_files = [
       *Dir.glob(File.join(ROOT, ".github/workflows/*.{yml,yaml}")),
       *Dir.glob(File.join(ROOT, "examples/**/*.{yml,yaml}")),

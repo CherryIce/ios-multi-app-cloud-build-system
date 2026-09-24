@@ -11,6 +11,31 @@ class SigningContractTest < Minitest::Test
   ROOT = File.expand_path("..", __dir__)
   CONFIG = File.join(__dir__, "fixtures/config/valid.yml")
   MAPPER = File.join(ROOT, "scripts/map-profiles.rb")
+  PREPARE_ASC_KEY = File.join(ROOT, "scripts/prepare-asc-key.sh")
+
+  def test_asc_key_preparation_accepts_wrapped_base64_portably
+    Dir.mktmpdir do |directory|
+      key = OpenSSL::PKey::EC.generate("prime256v1")
+      encoded = Base64.strict_encode64(key.to_pem).scan(/.{1,20}/).join("\n")
+      sensitive_directory = File.join(directory, "sensitive")
+      github_output = File.join(directory, "github-output")
+      environment = {
+        "ASC_API_KEY_P8_BASE64" => encoded,
+        "ASC_KEY_ID" => "TEST123456",
+        "ASC_ISSUER_ID" => "11111111-2222-3333-4444-555555555555",
+        "IOS_BUILD_SENSITIVE_DIR" => sensitive_directory,
+        "GITHUB_OUTPUT" => github_output
+      }
+
+      stdout, stderr, status = Open3.capture3(environment, "bash", PREPARE_ASC_KEY)
+
+      assert status.success?, [stdout, stderr].join("\n")
+      key_path = File.join(sensitive_directory, "private_keys/AuthKey_TEST123456.p8")
+      assert File.file?(key_path)
+      assert OpenSSL::PKey.read(File.binread(key_path)).private?
+      assert_includes File.read(github_output), "asc_key_path=#{key_path}"
+    end
+  end
 
   def test_profiles_must_include_the_imported_distribution_certificate
     skip "macOS plutil is required" unless File.executable?("/usr/bin/plutil")

@@ -7,6 +7,8 @@
 | 部分 | 定位 | 可运行性 |
 |---|---|---|
 | `.github/actions/build-upload` | 正式参考实现 | 已有脚本级自测；仍需使用真实 App、签名材料和 ASC 账号做接入验证 |
+| `.github/actions/review-status` | ASC 审核状态手动查询兜底 | 已有精确版本选择、状态归类和通知契约测试；真实状态需使用 ASC 账号验证 |
+| `webhooks/asc-review` | ASC 审核状态主动通知接收器 | 已有 HMAC、Ping、转发失败和去重契约测试；真实投递需在 ASC Recent Deliveries 验证 |
 | `scripts/`、`schemas/` | composite action 的核心实现 | 可由 action 调用，CI 检查语法、配置、JWT、状态解析和安全归档 |
 | `.github/workflows/core-self-test.yml` | 无真实密钥的 CI 自测 | Portable + macOS 工具链契约检查 |
 | `examples/app-repository/` | App 接入伪代码/字段草稿 | 必须补齐真实工程值、Environment、Secrets 和固定 SHA；不承诺原样运行 |
@@ -28,6 +30,10 @@ App repository production Environment
                   └── Archive → IPA inspection → Artifact
                           → optional ASC upload → TestFlight state
                           → optional App Store version → App Review submission
+
+App Store Connect review state change → HMAC-verified webhook receiver
+                                      → team notification endpoint
+Manual workflow_dispatch → pinned review-status action → exact ASC status query
 ```
 
 之所以采用 composite action，是因为 caller 的 Environment secrets 不能通过 `workflow_call` 原样传给中央 reusable workflow。需要审批前不可读取的 App 密钥时，job 必须绑定 App 仓库自己的 Environment。
@@ -36,7 +42,10 @@ App repository production Environment
 
 ```text
 .github/actions/build-upload/action.yml    composite action
+.github/actions/review-status/action.yml   ASC 审核状态手动查询 action
 .github/workflows/core-self-test.yml       无密钥自测
+webhooks/asc-review/                       ASC Webhook 验签与通知转发接收器
+docs/asc-review-status.md                  主动通知与手动查询接入说明
 schemas/ios-build-config.schema.json        配置 Schema
 scripts/                                    预检、签名、Archive、Export、ASC 和清理
 tests/                                      fixtures 与契约测试
@@ -102,6 +111,10 @@ bash tests/macos-contract.sh
 ```
 
 这些命令不使用 Apple 凭据，也不执行真实 Archive 或上传。
+
+## 审核进度通知
+
+审核进度采用“Apple Webhook 主动通知 + GitHub Actions 手动查询兜底”。接入、密钥、Payload、状态归类及证据边界见 [`docs/asc-review-status.md`](docs/asc-review-status.md)。App 仓库可从 [`examples/app-repository/.github/workflows/asc-review-status.yml`](examples/app-repository/.github/workflows/asc-review-status.yml) 开始配置，所有外部 Action 仍需固定到完整 commit SHA。
 
 ## Fastlane 与 Bitrise 草稿
 

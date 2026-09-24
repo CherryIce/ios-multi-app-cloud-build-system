@@ -1,0 +1,50 @@
+# APP REPOSITORY TEMPLATE: replace the action SHA, Environment, app ID, and
+# Secrets before use.
+name: ASC Review Status
+
+on:
+  workflow_dispatch:
+    inputs:
+      marketing_version:
+        description: App Store marketing version to query, for example 2.3.0
+        required: true
+        type: string
+      send_notification:
+        description: Send the query result to the configured notification webhook
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: asc-review-status-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  query:
+    environment: app-production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Query App Store review status
+        id: review
+        uses: CherryIce/ios-multi-app-cloud-build-system/.github/actions/review-status@<PINNED_FULL_COMMIT_SHA>
+        with:
+          app_id: "1234567890"
+          marketing_version: ${{ inputs.marketing_version }}
+          asc_api_key_p8_base64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+          asc_key_id: ${{ secrets.ASC_KEY_ID }}
+          asc_issuer_id: ${{ secrets.ASC_ISSUER_ID }}
+          notification_webhook_url: ${{ inputs.send_notification && secrets.ASC_REVIEW_NOTIFICATION_WEBHOOK_URL || '' }}
+          notification_webhook_bearer: ${{ inputs.send_notification && secrets.ASC_REVIEW_NOTIFICATION_WEBHOOK_BEARER || '' }}
+
+      - name: Retain review status
+        if: ${{ always() && steps.review.outputs.status_path != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: asc-review-status-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.review.outputs.status_path }}
+          if-no-files-found: warn
+          retention-days: 30
