@@ -49,6 +49,8 @@ scripts/                                    预检、签名、Archive、Export�
 tests/                                      fixtures 与契约测试
 examples/app-repository/                    App 仓库接入草稿
 ios-multi-app-cloud-build-system.md         完整实施与安全说明
+docs/github-actions-ios-build-configuration.md
+                                            Environment、Secrets、参数与自动打包图文配置说明
 ios-multi-app-cloud-build-system-additions/ Fastlane/Bitrise 草稿
 
 feat/asc-review-status-webhook 功能分支新增：
@@ -58,6 +60,8 @@ docs/asc-review-status.md                  主动通知与手动查询接入说�
 ```
 
 ## 接入步骤
+
+首次接入建议先阅读 [`GitHub Actions iOS 自动打包配置说明`](docs/github-actions-ios-build-configuration.md)，其中包含 Environment 页面截图、截图参数与当前接口的映射、Base64 命令以及完整流程检查清单。
 
 1. 将 [`examples/app-repository/.github/ios-build.yml`](examples/app-repository/.github/ios-build.yml) 复制到 App 仓库并填写真实 Target、Bundle ID、runner 和 Xcode。
 2. 将 [`examples/app-repository/.github/workflows/ios-release.yml`](examples/app-repository/.github/workflows/ios-release.yml) 复制到 App 仓库。
